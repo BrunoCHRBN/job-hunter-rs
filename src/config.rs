@@ -1,4 +1,5 @@
 use std::env;
+use std::path::Path;
 use anyhow::{bail, Result};
 
 #[derive(Debug, Clone)]
@@ -16,8 +17,16 @@ impl AppConfig {
         let gemini_api_key = env::var("GEMINI_API_KEY").unwrap_or_default();
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://jobs.db".to_string());
-        let python_bin = env::var("PYTHON_BIN")
-            .unwrap_or_else(|_| "python3".to_string());
+        let python_bin = match env::var("PYTHON_BIN") {
+            Ok(val) if !val.trim().is_empty() && val != "python3" => val,
+            _ => {
+                if Path::new(".venv/bin/python").exists() {
+                    ".venv/bin/python".to_string()
+                } else {
+                    "python3".to_string()
+                }
+            }
+        };
         let resume_path = env::var("RESUME_PATH")
             .unwrap_or_else(|_| "curriculo.md".to_string());
 

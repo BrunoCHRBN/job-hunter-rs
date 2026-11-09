@@ -6,11 +6,12 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 use crate::gemini::prompts::{
-    build_batch_extraction_user_prompt, build_match_analysis_user_prompt,
+    build_batch_extraction_user_prompt, build_match_analysis_user_prompt_with_profile,
     BATCH_EXTRACTION_SYSTEM_PROMPT, MATCH_ANALYSIS_SYSTEM_PROMPT,
 };
 use crate::models::{
-    BatchExtractionResponse, ExtractedJobMetadata, JobRecord, MatchAnalysisResult, RawJobListing,
+    BatchExtractionResponse, CandidateProfile, ExtractedJobMetadata, JobRecord,
+    MatchAnalysisResult, RawJobListing,
 };
 
 const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -282,7 +283,18 @@ impl GeminiClient {
         resume_md: &str,
         job: &JobRecord,
     ) -> Result<MatchAnalysisResult> {
-        let user_prompt = build_match_analysis_user_prompt(resume_md, job);
+        let default_profile = CandidateProfile::default();
+        self.analyze_job_match_with_profile(resume_md, job, &default_profile)
+            .await
+    }
+
+    pub async fn analyze_job_match_with_profile(
+        &self,
+        resume_md: &str,
+        job: &JobRecord,
+        profile: &CandidateProfile,
+    ) -> Result<MatchAnalysisResult> {
+        let user_prompt = build_match_analysis_user_prompt_with_profile(resume_md, job, profile);
         let raw_json = self
             .call_generate_content_with_candidates(
                 MATCH_ANALYSIS_MODELS,

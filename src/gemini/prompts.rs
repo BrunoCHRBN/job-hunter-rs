@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::models::{JobRecord, RawJobListing};
+use crate::models::{CandidateProfile, JobRecord, RawJobListing};
 
 pub const BATCH_EXTRACTION_SYSTEM_PROMPT: &str = r#"Você é um Engenheiro de Dados e Especialista em Recrutamento Técnico (Tech Recruiter & Industrial Operations Analyst).
 Sua tarefa é analisar um lote de vagas brutas e extrair metadados estruturados, informando a ORIGEM de cada dado importante.
@@ -74,9 +74,9 @@ Sua missão é decidir se vale candidatar-se: compare o currículo do candidato 
 Princípio central: nunca presuma experiência que o currículo não mostre.
 
 DIRETRIZES DE AVALIAÇÃO:
-1. Aderência técnica: Sistemas Supervisórios/SCADA, Monitoramento/Telemetria, TI/Redes/Linux, Python/TypeScript/SQL.
-2. Localização e modalidade: o candidato reside em Araraquara-SP (aceita Presencial/Híbrido em Araraquara e região próxima, ou 100% Remoto de qualquer lugar). Vaga Presencial ou Híbrida fora dessa região é uma barreira séria: penalize o `match_score` e marque a logística como "weak".
-3. Escala e turno: considere 6x2, 12x36, turnos rotativos ou comercial (5x2) frente ao perfil operacional do candidato.
+1. Aderência técnica: avalie as competências técnicas comprovadas no currículo frente aos requisitos da vaga.
+2. Localização e modalidade: use estritamente os CRITÉRIOS OPERACIONAIS DO CANDIDATO enviados no prompt do usuário (cidade base, região aceita para Presencial/Híbrido e aceitação de Remoto). Vaga Presencial ou Híbrida fora da região aceita pelo candidato é uma barreira séria: penalize o `match_score` e marque a logística como "weak".
+3. Escala e turno: considere as escalas aceitas pelo candidato nos critérios operacionais frente ao turno exigido pela vaga.
 4. `match_score` vai de 0 a 100.
 
 VEREDITO:
@@ -136,6 +136,15 @@ pub fn build_batch_extraction_user_prompt(jobs: &[RawJobListing]) -> String {
 }
 
 pub fn build_match_analysis_user_prompt(resume_md: &str, job: &JobRecord) -> String {
+    let default_profile = CandidateProfile::default();
+    build_match_analysis_user_prompt_with_profile(resume_md, job, &default_profile)
+}
+
+pub fn build_match_analysis_user_prompt_with_profile(
+    resume_md: &str,
+    job: &JobRecord,
+    profile: &CandidateProfile,
+) -> String {
     let skills = job.required_skills().join(", ");
     let red_flags = job.red_flags().join(", ");
     let raw_desc: String = job
@@ -146,8 +155,21 @@ pub fn build_match_analysis_user_prompt(resume_md: &str, job: &JobRecord) -> Str
         .take(5000)
         .collect();
 
+    let min_sal = if profile.min_salary_brl.trim().is_empty() {
+        "Não definida no perfil"
+    } else {
+        profile.min_salary_brl.trim()
+    };
+
     format!(
-        r#"=== CURRÍCULO DO CANDIDATO (curriculo.md) ===
+        r#"=== CRITÉRIOS OPERACIONAIS DO CANDIDATO (PERFIL EDITÁVEL) ===
+- Cidade Base de Residência: {base_city}
+- Cidades/Região Aceitas para Presencial ou Híbrido: {accepted_region}
+- Aceita 100% Remoto: {accept_remote}
+- Escalas e Turnos Aceitos: {accepted_shifts}
+- Pretensão Salarial Mínima: {min_sal}
+
+=== CURRÍCULO DO CANDIDATO (curriculo.md) ===
 {resume_md}
 
 === DADOS DA VAGA (ID #{id}) ===
@@ -166,6 +188,11 @@ pub fn build_match_analysis_user_prompt(resume_md: &str, job: &JobRecord) -> Str
 === DESCRIÇÃO BRUTA DA VAGA ===
 {raw_desc}
 "#,
+        base_city = profile.base_city,
+        accepted_region = profile.accepted_region,
+        accept_remote = if profile.accept_remote != 0 { "Sim (qualquer estado)" } else { "Não" },
+        accepted_shifts = profile.accepted_shifts,
+        min_sal = min_sal,
         resume_md = resume_md,
         id = job.id,
         title = job.title_str(),

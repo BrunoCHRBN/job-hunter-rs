@@ -5,11 +5,13 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
 
 use crate::models::{
-    DbStats, ExtractedJobMetadata, JobFilter, JobRecord, MatchAnalysisResult, RawJobListing,
+    CandidateProfile, DbStats, ExtractedJobMetadata, JobFilter, JobRecord, MatchAnalysisResult,
+    RawJobListing, SavedSearch,
 };
 
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_dossie.sql");
+const MIGRATION_003: &str = include_str!("../migrations/003_automation.sql");
 
 const JOB_SELECT_COLUMNS: &str = "id, dedup_hash, external_id, source, title, company, location, url, raw_description, is_enriched, work_model, contract_type, seniority, shift_schedule, salary_estimate_brl, required_skills_json, red_flags_json, ai_summary, embedding_json, application_status, match_score, match_analysis_md, published_at, created_at, dossier_json, fit_json";
 
@@ -93,6 +95,34 @@ impl Database {
                 .execute(&pool)
                 .await
                 .context("Falha ao aplicar migration (002_dossie.sql)")?;
+        }
+
+        sqlx::raw_sql(MIGRATION_003)
+            .execute(&pool)
+            .await
+            .context("Falha ao aplicar migration (003_automation.sql)")?;
+
+        let count_row = sqlx::query("SELECT COUNT(*) as cnt FROM saved_searches")
+            .fetch_one(&pool)
+            .await?;
+        let saved_cnt: i64 = count_row.try_get("cnt").unwrap_or(0);
+        if saved_cnt == 0 {
+            let defaults = [
+                ("Operador", "Araraquara, São Carlos, Matão", 0_i64, 180_i64),
+                ("Técnico", "Araraquara, São Carlos", 0_i64, 180_i64),
+                ("Python", "", 1_i64, 240_i64),
+            ];
+            for (q, loc, rem, interval) in defaults {
+                let _ = sqlx::query(
+                    "INSERT INTO saved_searches (query, location, remote, enabled, interval_minutes) VALUES (?1, ?2, ?3, 1, ?4)",
+                )
+                .bind(q)
+                .bind(loc)
+                .bind(rem)
+                .bind(interval)
+                .execute(&pool)
+                .await;
+            }
         }
 
         Ok(Self { pool })
@@ -424,5 +454,141 @@ impl Database {
             enriched_jobs,
             saved_or_applied_jobs,
         })
+    }
+
+    pub async fn get_candidate_profile(&self) -> Result<CandidateProfile> {
+        let profile = sqlx::query_as::<_, CandidateProfile>(
+            "SELECT id, base_city, accepted_region, accept_remote, accepted_shifts, min_salary_brl, exclude_terms, auto_enrich, auto_match_threshold, notify_on_apply FROM candidate_profile WHERE id = 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .context("Erro ao ler perfil de critérios do candidato")?
+        .unwrap_or_default();
+
+        Ok(profile)
+    }
+
+    pub async fn update_candidate_profile(&self, p: &CandidateProfile) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE candidate_profile
+            SET base_city = ?1,
+                accepted_region = ?2,
+                accept_remote = ?3,
+                accepted_shifts = ?4,
+                min_salary_brl = ?5,
+                exclude_terms = ?6,
+                auto_enrich = ?7,
+                auto_match_threshold = ?8,
+                notify_on_apply = ?9
+            WHERE id = 1
+            "#,
+        )
+        .bind(&p.base_city)
+        .bind(&p.accepted_region)
+        .bind(p.accept_remote)
+        .bind(&p.accepted_shifts)
+        .bind(&p.min_salary_brl)
+        .bind(&p.exclude_terms)
+        .bind(p.auto_enrich)
+        .bind(p.auto_match_threshold)
+        .bind(p.notify_on_apply)
+        .execute(&self.pool)
+        .await
+        .context("Erro ao salvar perfil de critérios do candidato")?;
+        Ok(())
+    }
+
+    pub async fn list_saved_searches(&self) -> Result<Vec<SavedSearch>> {
+        let rows = sqlx::query_as::<_, SavedSearch>(
+            "SELECT id, query, location, remote, enabled, interval_minutes, last_run_at, last_found_count FROM saved_searches ORDER BY id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Erro ao listar rondas de busca salvas")?;
+        Ok(rows)
+    }
+
+    pub async fn get_due_saved_searches(&self) -> Result<Vec<SavedSearch>> {
+        let rows = sqlx::query_as::<_, SavedSearch>(
+            r#"
+            SELECT id, query, location, remote, enabled, interval_minutes, last_run_at, last_found_count
+            FROM saved_searches
+            WHERE enabled = 1
+              AND (
+                last_run_at IS NULL
+                OR datetime(last_run_at, '+' || interval_minutes || ' minutes') <= datetime('now')
+              )
+            ORDER BY id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Erro ao buscar rondas pendentes de execução")?;
+        Ok(rows)
+    }
+
+    pub async fn insert_saved_search(
+        &self,
+        query: &str,
+        location: &str,
+        remote: bool,
+        interval_minutes: i64,
+    ) -> Result<i64> {
+        let res = sqlx::query(
+            "INSERT INTO saved_searches (query, location, remote, enabled, interval_minutes) VALUES (?1, ?2, ?3, 1, ?4)",
+        )
+        .bind(query.trim())
+        .bind(location.trim())
+        .bind(if remote { 1_i64 } else { 0_i64 })
+        .bind(interval_minutes.clamp(15, 1440))
+        .execute(&self.pool)
+        .await
+        .context("Erro ao cadastrar ronda de busca automática")?;
+        Ok(res.last_insert_rowid())
+    }
+
+    pub async fn toggle_saved_search(&self, id: i64, enabled: bool) -> Result<()> {
+        sqlx::query("UPDATE saved_searches SET enabled = ?1 WHERE id = ?2")
+            .bind(if enabled { 1_i64 } else { 0_i64 })
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Erro ao alternar ronda de busca automática")?;
+        Ok(())
+    }
+
+    pub async fn delete_saved_search(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM saved_searches WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .context("Erro ao excluir ronda de busca automática")?;
+        Ok(())
+    }
+
+    pub async fn mark_saved_search_ran(&self, id: i64, found_count: usize) -> Result<()> {
+        sqlx::query(
+            "UPDATE saved_searches SET last_run_at = datetime('now'), last_found_count = ?1 WHERE id = ?2",
+        )
+        .bind(found_count as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("Erro ao registrar execução da ronda de busca")?;
+        Ok(())
+    }
+
+    pub async fn get_unmatched_enriched_jobs(&self, limit: i64) -> Result<Vec<JobRecord>> {
+        let sql = format!(
+            "SELECT {} FROM jobs WHERE is_enriched = 1 AND match_score IS NULL AND embedding_json IS NOT NULL AND COALESCE(application_status, 'Descoberta') != 'Descartada' ORDER BY id DESC LIMIT ?1",
+            JOB_SELECT_COLUMNS
+        );
+        let rows = sqlx::query_as::<_, JobRecord>(&sql)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .context("Erro ao buscar vagas enriquecidas sem match")?;
+        Ok(rows)
     }
 }

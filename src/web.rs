@@ -7,17 +7,18 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{info, warn};
 
+use crate::automation::{self, SharedAutomationStatus};
 use crate::collectors;
 use crate::config::AppConfig;
 use crate::db::Database;
 use crate::gemini::GeminiClient;
-use crate::models::{JobFilter, JobRecord};
+use crate::models::{CandidateProfile, JobFilter, JobRecord};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
@@ -28,6 +29,7 @@ const APP_JS: &str = include_str!("../static/app.js");
 pub struct WebState {
     pub cfg: AppConfig,
     pub db: Database,
+    pub auto_status: SharedAutomationStatus,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -75,8 +77,35 @@ pub struct ResumePayload {
     pub content: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NewSavedSearchPayload {
+    pub query: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub remote: bool,
+    #[serde(default = "default_interval_minutes")]
+    pub interval_minutes: i64,
+}
+
+fn default_interval_minutes() -> i64 {
+    180
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToggleSavedSearchPayload {
+    pub enabled: bool,
+}
+
 pub async fn run_web_server(cfg: AppConfig, db: Database, port: u16) -> Result<()> {
-    let state = Arc::new(WebState { cfg, db });
+    let auto_status = automation::new_shared_status();
+    automation::spawn_automation_worker(cfg.clone(), db.clone(), auto_status.clone());
+
+    let state = Arc::new(WebState {
+        cfg,
+        db,
+        auto_status,
+    });
 
     let app = Router::new()
         .route("/", get(serve_index))
@@ -101,6 +130,18 @@ pub async fn run_web_server(cfg: AppConfig, db: Database, port: u16) -> Result<(
             post(api_update_status).patch(api_update_status),
         )
         .route("/api/resume", get(api_get_resume).put(api_put_resume))
+        .route("/api/profile", get(api_get_profile).put(api_put_profile))
+        .route("/api/automation", get(api_get_automation))
+        .route("/api/automation/searches", post(api_create_saved_search))
+        .route(
+            "/api/automation/searches/:id/toggle",
+            post(api_toggle_saved_search),
+        )
+        .route(
+            "/api/automation/searches/:id",
+            delete(api_delete_saved_search),
+        )
+        .route("/api/automation/run-now", post(api_run_automation_now))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -381,8 +422,9 @@ async fn api_job_match(
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Vaga #{} não encontrada", job_id)))?;
 
     let resume_md = fs::read_to_string(&state.cfg.resume_path).map_err(internal_err)?;
+    let profile = state.db.get_candidate_profile().await.unwrap_or_default();
     let analysis = gemini
-        .analyze_job_match(&resume_md, &job)
+        .analyze_job_match_with_profile(&resume_md, &job, &profile)
         .await
         .map_err(internal_err)?;
 
@@ -435,4 +477,88 @@ async fn api_put_resume(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     fs::write(&state.cfg.resume_path, payload.content).map_err(internal_err)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn api_get_profile(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<CandidateProfile>, (StatusCode, String)> {
+    let profile = state.db.get_candidate_profile().await.map_err(internal_err)?;
+    Ok(Json(profile))
+}
+
+async fn api_put_profile(
+    State(state): State<Arc<WebState>>,
+    Json(payload): Json<CandidateProfile>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .db
+        .update_candidate_profile(&payload)
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn api_get_automation(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let searches = state.db.list_saved_searches().await.map_err(internal_err)?;
+    let status = state.auto_status.read().await.clone();
+    Ok(Json(json!({
+        "status": status,
+        "searches": searches,
+    })))
+}
+
+async fn api_create_saved_search(
+    State(state): State<Arc<WebState>>,
+    Json(payload): Json<NewSavedSearchPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let id = state
+        .db
+        .insert_saved_search(
+            &payload.query,
+            &payload.location,
+            payload.remote,
+            payload.interval_minutes,
+        )
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(json!({ "id": id, "ok": true })))
+}
+
+async fn api_toggle_saved_search(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<i64>,
+    Json(payload): Json<ToggleSavedSearchPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .db
+        .toggle_saved_search(id, payload.enabled)
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn api_delete_saved_search(
+    State(state): State<Arc<WebState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .db
+        .delete_saved_search(id)
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn api_run_automation_now(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let summary = automation::run_automation_tick(&state.cfg, &state.db, &state.auto_status, true)
+        .await
+        .map_err(internal_err)?;
+    Ok(Json(json!({
+        "ok": true,
+        "summary": summary,
+    })))
 }

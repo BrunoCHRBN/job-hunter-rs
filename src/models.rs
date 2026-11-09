@@ -429,3 +429,110 @@ impl JobRecord {
             .and_then(|s| serde_json::from_str::<MatchAnalysisResult>(s).ok())
     }
 }
+
+// ======================================================================
+// Automação Contínua (Zero-Touch) e Perfil Editável de Critérios
+// ======================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CandidateProfile {
+    #[serde(default = "default_profile_id")]
+    pub id: i64,
+    #[serde(default = "default_base_city")]
+    pub base_city: String,
+    #[serde(default = "default_accepted_region")]
+    pub accepted_region: String,
+    #[serde(default = "default_one")]
+    pub accept_remote: i64,
+    #[serde(default = "default_accepted_shifts")]
+    pub accepted_shifts: String,
+    #[serde(default)]
+    pub min_salary_brl: String,
+    #[serde(default = "default_exclude_terms")]
+    pub exclude_terms: String,
+    #[serde(default = "default_one")]
+    pub auto_enrich: i64,
+    #[serde(default = "default_auto_match_threshold")]
+    pub auto_match_threshold: f64,
+    #[serde(default = "default_one")]
+    pub notify_on_apply: i64,
+}
+
+fn default_profile_id() -> i64 {
+    1
+}
+fn default_base_city() -> String {
+    "Araraquara".to_string()
+}
+fn default_accepted_region() -> String {
+    "Araraquara, São Carlos, Matão, Américo Brasiliense, Ibaté".to_string()
+}
+fn default_one() -> i64 {
+    1
+}
+fn default_accepted_shifts() -> String {
+    "Comercial (5x2), Escala 6x2, 12x36, Turnos Rotativos".to_string()
+}
+fn default_exclude_terms() -> String {
+    "vendedor de loja, açougueiro, confeiteiro, manicure, corretor de imóveis, pedagogo, farmacêutico".to_string()
+}
+fn default_auto_match_threshold() -> f64 {
+    0.62
+}
+
+impl Default for CandidateProfile {
+    fn default() -> Self {
+        Self {
+            id: 1,
+            base_city: default_base_city(),
+            accepted_region: default_accepted_region(),
+            accept_remote: 1,
+            accepted_shifts: default_accepted_shifts(),
+            min_salary_brl: String::new(),
+            exclude_terms: default_exclude_terms(),
+            auto_enrich: 1,
+            auto_match_threshold: default_auto_match_threshold(),
+            notify_on_apply: 1,
+        }
+    }
+}
+
+impl CandidateProfile {
+    /// Retorna `true` se o título da vaga contiver algum termo excluído pelo usuário.
+    pub fn matches_exclusion(&self, title: &str) -> bool {
+        let title_norm = strip_accents_lower(title);
+        self.exclude_terms
+            .split(',')
+            .map(|t| strip_accents_lower(t.trim()))
+            .filter(|t| !t.is_empty())
+            .any(|term| title_norm.contains(&term))
+    }
+}
+
+fn strip_accents_lower(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' => 'a',
+            'é' | 'ê' => 'e',
+            'í' => 'i',
+            'ó' | 'ô' | 'õ' => 'o',
+            'ú' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SavedSearch {
+    pub id: i64,
+    pub query: String,
+    pub location: String,
+    pub remote: i64,
+    pub enabled: i64,
+    pub interval_minutes: i64,
+    pub last_run_at: Option<String>,
+    pub last_found_count: i64,
+}
+

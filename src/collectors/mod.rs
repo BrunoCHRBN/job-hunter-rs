@@ -13,11 +13,13 @@ pub struct CollectionReport {
     pub gupy_count: usize,
     pub jobspy_count: usize,
     pub total_fetched: usize,
+    pub excluded_by_filter: usize,
     pub newly_inserted: usize,
     pub duplicates_skipped: usize,
 }
 
 /// Dispara os coletores Gupy e JobSpy concorrentemente com `tokio::join!`,
+/// filtra vagas cujos títulos batam em `exclude_terms` do perfil do candidato,
 /// deduplica por hash `blake3` e persiste as vagas inéditas no SQLite.
 pub async fn collect_all(
     config: &AppConfig,
@@ -28,6 +30,7 @@ pub async fn collect_all(
     remote: bool,
 ) -> Result<CollectionReport> {
     let loc_str = location.unwrap_or("Brasil");
+    let profile = db.get_candidate_profile().await.unwrap_or_default();
 
     let gupy_fut = gupy::fetch_gupy_jobs(query, location, limit, remote);
     let jobspy_fut = jobspy::fetch_jobspy_jobs(
@@ -57,17 +60,24 @@ pub async fn collect_all(
     combined.extend(jobspy_jobs);
 
     let total_fetched = combined.len();
-    let (newly_inserted, duplicates_skipped) = db.insert_raw_jobs_batch(&combined).await?;
+    let filtered: Vec<RawJobListing> = combined
+        .into_iter()
+        .filter(|j| !profile.matches_exclusion(&j.title))
+        .collect();
+    let excluded_by_filter = total_fetched.saturating_sub(filtered.len());
+
+    let (newly_inserted, duplicates_skipped) = db.insert_raw_jobs_batch(&filtered).await?;
 
     info!(
-        "Coleta concluída: {} obtidas (Gupy: {}, JobSpy: {}), {} novas salvas, {} duplicadas ignoradas.",
-        total_fetched, gupy_count, jobspy_count, newly_inserted, duplicates_skipped
+        "Coleta concluída: {} obtidas (Gupy: {}, JobSpy: {}), {} filtradas por exclusão, {} novas salvas, {} duplicadas ignoradas.",
+        total_fetched, gupy_count, jobspy_count, excluded_by_filter, newly_inserted, duplicates_skipped
     );
 
     Ok(CollectionReport {
         gupy_count,
         jobspy_count,
         total_fetched,
+        excluded_by_filter,
         newly_inserted,
         duplicates_skipped,
     })

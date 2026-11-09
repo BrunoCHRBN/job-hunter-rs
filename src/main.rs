@@ -1,3 +1,4 @@
+pub mod automation;
 pub mod collectors;
 pub mod config;
 pub mod db;

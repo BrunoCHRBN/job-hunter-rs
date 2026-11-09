@@ -51,6 +51,23 @@
           <div class="card-h"><h2>Melhores matches</h2><a href="#vagas">Ver todas as vagas</a></div>
           <ul id="top" class="plain list"></ul>
         </div>
+        <div class="card" id="auto-card">
+          <div class="card-h">
+            <div>
+              <h2>Automação &amp; Rondas de Busca</h2>
+              <p id="auto-status-msg" class="mut">Carregando status do worker…</p>
+            </div>
+            <button type="button" class="btn primary" id="btn-run-auto">Rodar ronda agora</button>
+          </div>
+          <ul id="auto-searches" class="plain list" style="margin-top:10px"></ul>
+          <form id="f-new-search" class="row" style="margin-top:12px;align-items:flex-end">
+            <label class="grow">Nova ronda (cargo)<input name="query" required placeholder="Ex: Analista de Suporte"></label>
+            <label class="grow">Localidade<input name="location" value="Araraquara, São Carlos" placeholder="Cidades ou vazio"></label>
+            <label style="width:120px">Intervalo (min)<input type="number" name="interval_minutes" value="180" min="15" max="1440"></label>
+            <label class="chk" style="padding-bottom:6px"><input type="checkbox" name="remote">Remoto</label>
+            <button type="submit" class="btn">Adicionar ronda</button>
+          </form>
+        </div>
       </div>
       <aside class="stack">
         <div class="card"><h2 style="margin-bottom:12px">Seu banco de vagas</h2><dl id="stats" class="stats"></dl></div>
@@ -101,8 +118,35 @@
     <div id="board" class="board"></div>
   </section>
 
-  <!-- CURRÍCULO: editor + pré-visualização lado a lado, indicador de alterações e Ctrl+S -->
+  <!-- CURRÍCULO: perfil de critérios operacionais + editor e pré-visualização lado a lado -->
   <section id="v-curriculo" hidden>
+    <form id="f-profile" class="card" style="margin-bottom:16px">
+      <div class="card-h">
+        <div>
+          <h2>Critérios Operacionais &amp; Pré-Filtro Automático</h2>
+          <p class="mut">Estes critérios alimentam o cálculo de Match/Fit v2 (substituindo valores fixos) e descartam vagas irrelevantes na coleta.</p>
+        </div>
+        <button type="submit" class="btn primary" id="save-profile">Salvar critérios</button>
+      </div>
+      <div class="two" style="margin-top:12px">
+        <label>Cidade base de residência<input id="p-city" required placeholder="Ex: Araraquara"></label>
+        <label>Região aceita (Presencial / Híbrido)<input id="p-region" required placeholder="Ex: Araraquara, São Carlos, Matão, Américo Brasiliense"></label>
+      </div>
+      <div class="two" style="margin-top:10px">
+        <label>Escalas e turnos aceitos<input id="p-shifts" required placeholder="Ex: Comercial (5x2), Escala 6x2, 12x36"></label>
+        <label>Pretensão salarial mínima (opcional)<input id="p-salary" placeholder="Ex: R$ 2.800"></label>
+      </div>
+      <div class="two" style="margin-top:10px">
+        <label>Termos excluídos na coleta (separados por vírgula)<input id="p-exclude" placeholder="Ex: vendedor de loja, açougueiro, manicure"></label>
+        <label>Limiar de similaridade para Auto-Match (0.40 a 0.90)<input type="number" step="0.01" min="0.40" max="0.90" id="p-threshold" value="0.62"></label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label class="chk"><input type="checkbox" id="p-remote" checked>Aceita vagas 100% Remotas</label>
+        <label class="chk"><input type="checkbox" id="p-auto-enrich" checked>Enriquecer vagas automaticamente em background</label>
+        <label class="chk"><input type="checkbox" id="p-notify" checked>Notificar no desktop quando o veredito for Apply</label>
+      </div>
+    </form>
+
     <div class="page-h">
       <div>
         <div class="row" style="align-items:center;gap:10px">

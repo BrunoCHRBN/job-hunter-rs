@@ -53,6 +53,13 @@ const API = {
   enrich: () => req('POST', '/api/jobs/enrich'),
   resume: () => req('GET', '/api/resume'),
   saveResume: (content) => req('PUT', '/api/resume', { content }),
+  profile: () => req('GET', '/api/profile'),
+  saveProfile: (p) => req('PUT', '/api/profile', p),
+  automation: () => req('GET', '/api/automation'),
+  addSearch: (b) => req('POST', '/api/automation/searches', b),
+  toggleSearch: (id, enabled) => req('POST', `/api/automation/searches/${id}/toggle`, { enabled }),
+  deleteSearch: (id) => req('DELETE', `/api/automation/searches/${id}`),
+  runAutoNow: () => req('POST', '/api/automation/run-now'),
 };
 
 const nk = (s) =>
@@ -221,6 +228,8 @@ const S = {
   cvStale: false,
   matchingId: null,
   expandedCols: { descoberta: false, descartada: false },
+  auto: null,
+  profile: null,
 };
 
 function saveFilters() {
@@ -268,15 +277,19 @@ async function run(btn, fn, ok) {
 }
 
 async function load() {
-  const [jobsData, cvData] = await Promise.all([
+  const [jobsData, cvData, autoData, profData] = await Promise.all([
     API.jobs(),
     S.cv === null ? API.resume().catch(() => null) : Promise.resolve(null),
+    API.automation().catch(() => null),
+    S.profile === null ? API.profile().catch(() => null) : Promise.resolve(null),
   ]);
   if (cvData !== null && S.cv === null) {
     S.cv = typeof cvData === 'string' ? cvData : cvData?.content ?? '';
     const cvEl = $('#cv');
     if (cvEl && !cvEl.value) cvEl.value = S.cv;
   }
+  if (autoData) S.auto = autoData;
+  if (profData) S.profile = profData;
   S.jobs = (Array.isArray(jobsData) ? jobsData : jobsData.jobs || []).map(norm);
   syncFilterInputs();
   render();
@@ -746,6 +759,33 @@ function renderPainel() {
         </div>`;
       }).join('')}
     </div>`;
+
+  /* Automação & Rondas de Busca */
+  const stMsg = $('#auto-status-msg');
+  const listEl = $('#auto-searches');
+  if (stMsg && S.auto && S.auto.status) {
+    const st = S.auto.status;
+    stMsg.textContent = `${st.is_running_cycle ? 'Executando ciclo agora…' : st.last_cycle_summary} (Coletadas: ${st.total_auto_collected} · Enriquecidas: ${st.total_auto_enriched} · Auto-Matches: ${st.total_auto_matched})`;
+  }
+  if (listEl && S.auto) {
+    const searches = S.auto.searches || [];
+    listEl.innerHTML =
+      searches
+        .map(
+          (s) => `<li style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border);gap:8px">
+            <div>
+              <strong>${esc(s.query)}</strong>
+              <span class="mut"> · ${esc(s.remote ? 'Remoto' : s.location || 'Brasil')} · a cada ${s.interval_minutes} min</span>
+              ${s.last_run_at ? `<span class="mut" style="font-size:11px"> (última: ${esc(s.last_run_at)} · +${s.last_found_count} novas)</span>` : ''}
+            </div>
+            <div class="row">
+              <button type="button" class="btn ghost" data-toggle-search="${s.id}" data-enabled="${s.enabled ? '1' : '0'}">${s.enabled ? 'Ativa ✓' : 'Pausada'}</button>
+              <button type="button" class="btn ghost danger" data-del-search="${s.id}">Excluir</button>
+            </div>
+          </li>`
+        )
+        .join('') || '<li class="empty">Nenhuma ronda automática cadastrada.</li>';
+  }
 }
 
 /* ---------- Tela: Funil (Coluna Descoberta e Descartada recolhidas por padrão + Drag-and-Drop) ---------- */
@@ -893,6 +933,17 @@ function updateCvDirtyIndicator() {
 }
 
 async function renderCurriculo() {
+  if (S.profile) {
+    $('#p-city').value = S.profile.base_city || 'Araraquara';
+    $('#p-region').value = S.profile.accepted_region || '';
+    $('#p-shifts').value = S.profile.accepted_shifts || '';
+    $('#p-salary').value = S.profile.min_salary_brl || '';
+    $('#p-exclude').value = S.profile.exclude_terms || '';
+    $('#p-threshold').value = S.profile.auto_match_threshold ?? 0.62;
+    $('#p-remote').checked = Boolean(S.profile.accept_remote);
+    $('#p-auto-enrich').checked = Boolean(S.profile.auto_enrich);
+    $('#p-notify').checked = Boolean(S.profile.notify_on_apply);
+  }
   if (S.cv === null) {
     try {
       const d = await API.resume();
@@ -1026,7 +1077,7 @@ const nextStage = () => {
 
 document.addEventListener('click', (e) => {
   const t = e.target.closest(
-    '[data-id],[data-open],[data-tab],[data-act],[data-move],[data-stage-to],[data-toggle-col]'
+    '[data-id],[data-open],[data-tab],[data-act],[data-move],[data-stage-to],[data-toggle-col],[data-toggle-search],[data-del-search]'
   );
   if (!t) return;
   const d = t.dataset;
@@ -1044,6 +1095,19 @@ document.addEventListener('click', (e) => {
   } else if (d.toggleCol) {
     S.expandedCols[d.toggleCol] = !S.expandedCols[d.toggleCol];
     renderFunil();
+  } else if (d.toggleSearch) {
+    const id = +d.toggleSearch;
+    const nextEnabled = d.enabled !== '1';
+    run(t, async () => {
+      await API.toggleSearch(id, nextEnabled);
+      await load();
+    }, nextEnabled ? 'Ronda ativada.' : 'Ronda pausada.');
+  } else if (d.delSearch) {
+    const id = +d.delSearch;
+    run(t, async () => {
+      await API.deleteSearch(id);
+      await load();
+    }, 'Ronda removida.');
   } else if (d.move) {
     const j = S.jobs.find((x) => x.id === +d.for);
     if (!j) return;
@@ -1140,6 +1204,52 @@ $('#f-coleta').addEventListener('submit', (e) => {
 });
 
 $('#save-cv').addEventListener('click', (e) => saveCurriculum(e.currentTarget));
+
+$('#btn-run-auto')?.addEventListener('click', (e) => {
+  run(e.currentTarget, async () => {
+    toast('Executando ronda completa (coleta + enriquecimento + auto-match)…');
+    const res = await API.runAutoNow();
+    await load();
+    toast(res.summary || 'Ronda concluída.');
+  });
+});
+
+$('#f-new-search')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  run(e.submitter, async () => {
+    await API.addSearch({
+      query: String(f.get('query') || '').trim(),
+      location: String(f.get('location') || '').trim(),
+      remote: Boolean(f.get('remote')),
+      interval_minutes: Number(f.get('interval_minutes') || 180),
+    });
+    e.target.reset();
+    await load();
+  }, 'Nova ronda de busca adicionada.');
+});
+
+$('#f-profile')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const payload = {
+    id: 1,
+    base_city: $('#p-city').value.trim(),
+    accepted_region: $('#p-region').value.trim(),
+    accepted_shifts: $('#p-shifts').value.trim(),
+    min_salary_brl: $('#p-salary').value.trim(),
+    exclude_terms: $('#p-exclude').value.trim(),
+    auto_match_threshold: Number($('#p-threshold').value || 0.62),
+    accept_remote: $('#p-remote').checked ? 1 : 0,
+    auto_enrich: $('#p-auto-enrich').checked ? 1 : 0,
+    notify_on_apply: $('#p-notify').checked ? 1 : 0,
+  };
+  run($('#save-profile'), async () => {
+    await API.saveProfile(payload);
+    S.profile = payload;
+    S.cvStale = true;
+    $('#cv-stale').hidden = false;
+  }, 'Critérios operacionais salvos com sucesso.');
+});
 
 $('#theme').addEventListener('click', () => {
   const d = document.documentElement;
