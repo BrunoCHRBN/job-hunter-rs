@@ -98,8 +98,8 @@ pub async fn run_web_server(cfg: AppConfig, db: Database, port: u16) -> Result<(
         .route("/api/resume", get(api_get_resume).put(api_put_resume))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("🌐 Servidor Web iniciado em http://{}", addr);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    info!("🌐 Servidor Web iniciado em http://127.0.0.1:{}", port);
     println!("🌐 Bancada Web Job Hunter RS ativa em: http://localhost:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -168,51 +168,59 @@ async fn api_list_jobs(
     Ok(Json(serde_json::to_value(jobs).map_err(internal_err)?))
 }
 
-async fn run_enrichment_batches(state: &WebState, batch_size: usize) -> Result<usize> {
+/// Processa até 1 lote (padrão 5 vagas) por requisição para responder rápido (< 5s)
+/// e evitar timeouts HTTP no navegador. Retorna `(enriched_count, remaining_unenriched)`.
+async fn run_single_enrichment_batch(state: &WebState, batch_size: usize) -> Result<(usize, usize)> {
     let api_key = state.cfg.require_gemini_key()?;
     let gemini = GeminiClient::new(api_key)?;
     let effective_batch = batch_size.clamp(1, 10);
 
-    let unenriched = state.db.get_unenriched_jobs(50).await?;
-    let mut enriched_count = 0usize;
-
-    for chunk in unenriched.chunks(effective_batch) {
-        let raw_batch: Vec<_> = chunk.iter().map(|j| j.to_raw_listing()).collect();
-        let extracted_list = match gemini.extract_jobs_batch(&raw_batch).await {
-            Ok(list) => list,
-            Err(err) => {
-                warn!("Erro na extração em lote via Web API: {}", err);
-                continue;
-            }
-        };
-
-        for (idx, job_record) in chunk.iter().enumerate() {
-            let expected_ext_id = job_record
-                .external_id
-                .clone()
-                .unwrap_or_else(|| job_record.id.to_string());
-
-            let maybe_meta = extracted_list
-                .iter()
-                .find(|m| m.external_id == expected_ext_id)
-                .or_else(|| extracted_list.get(idx));
-
-            let Some(meta) = maybe_meta else {
-                continue;
-            };
-
-            let embedding_text = job_record.build_embedding_text(meta);
-            let embedding_opt = gemini.generate_embedding(&embedding_text).await.ok();
-
-            state
-                .db
-                .update_job_enrichment(job_record.id, meta, embedding_opt.as_deref())
-                .await?;
-            enriched_count += 1;
-        }
+    let unenriched = state
+        .db
+        .get_unenriched_jobs(effective_batch as i64)
+        .await?;
+    if unenriched.is_empty() {
+        return Ok((0, 0));
     }
 
-    Ok(enriched_count)
+    let raw_batch: Vec<_> = unenriched.iter().map(|j| j.to_raw_listing()).collect();
+    let extracted_list = match gemini.extract_jobs_batch(&raw_batch).await {
+        Ok(list) => list,
+        Err(err) => {
+            warn!("Erro na extração em lote via Web API: {}", err);
+            return Err(err);
+        }
+    };
+
+    let mut enriched_count = 0usize;
+
+    for (idx, job_record) in unenriched.iter().enumerate() {
+        let expected_ext_id = job_record
+            .external_id
+            .clone()
+            .unwrap_or_else(|| job_record.id.to_string());
+
+        let maybe_meta = extracted_list
+            .iter()
+            .find(|m| m.external_id == expected_ext_id)
+            .or_else(|| extracted_list.get(idx));
+
+        let Some(meta) = maybe_meta else {
+            continue;
+        };
+
+        let embedding_text = job_record.build_embedding_text(meta);
+        let embedding_opt = gemini.generate_embedding(&embedding_text).await.ok();
+
+        state
+            .db
+            .update_job_enrichment(job_record.id, meta, embedding_opt.as_deref())
+            .await?;
+        enriched_count += 1;
+    }
+
+    let remaining = state.db.get_unenriched_jobs(100).await?.len();
+    Ok((enriched_count, remaining))
 }
 
 async fn api_collect(
@@ -230,23 +238,13 @@ async fn api_collect(
     .await
     .map_err(internal_err)?;
 
-    let mut enriched_count = 0usize;
-    if payload.enrich && report.newly_inserted > 0 {
-        enriched_count = run_enrichment_batches(&state, 5)
-            .await
-            .unwrap_or_else(|err| {
-                warn!("Aviso no auto-enriquecimento após coleta: {}", err);
-                0
-            });
-    }
-
     Ok(Json(json!({
         "gupy_count": report.gupy_count,
         "jobspy_count": report.jobspy_count,
         "total_fetched": report.total_fetched,
         "newly_inserted": report.newly_inserted,
         "duplicates_skipped": report.duplicates_skipped,
-        "enriched_count": enriched_count,
+        "should_enrich": payload.enrich && report.newly_inserted > 0,
     })))
 }
 
@@ -260,11 +258,14 @@ async fn api_enrich(
         serde_json::from_slice(&body).unwrap_or(EnrichPayload { batch_size: 5 })
     };
 
-    let enriched_count = run_enrichment_batches(&state, payload.batch_size)
+    let (enriched_count, remaining) = run_single_enrichment_batch(&state, payload.batch_size)
         .await
         .map_err(internal_err)?;
 
-    Ok(Json(json!({ "enriched_count": enriched_count })))
+    Ok(Json(json!({
+        "enriched_count": enriched_count,
+        "remaining": remaining,
+    })))
 }
 
 async fn api_rank(

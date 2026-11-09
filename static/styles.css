@@ -496,6 +496,23 @@ input:hover, select:hover, textarea:hover {
   color: var(--text-2);
 }
 
+.chip-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.chip-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
 .chip.ok {
   background: var(--ok-bg);
   border-color: transparent;

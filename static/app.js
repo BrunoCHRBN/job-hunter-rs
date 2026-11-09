@@ -19,11 +19,16 @@ const EMPTY_STAGE_GUIDE = {
 };
 
 async function req(method, url, body) {
-  const r = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (netErr) {
+    throw new Error('Falha de comunicação com o servidor local. Recarregue a página (F5) e tente novamente.');
+  }
   const t = await r.text();
   if (!r.ok) throw new Error(t || 'Erro ' + r.status);
   try {
@@ -180,12 +185,13 @@ function loadSavedFilters() {
     const saved = JSON.parse(localStorage.getItem('jh-filters') || '{}');
     return {
       q: saved.q || '',
+      local: saved.local || '',
       modo: saved.modo || '',
       turno: saved.turno || '',
       etapa: saved.etapa || '',
     };
   } catch {
-    return { q: '', modo: '', turno: '', etapa: '' };
+    return { q: '', local: '', modo: '', turno: '', etapa: '' };
   }
 }
 
@@ -261,12 +267,14 @@ async function load() {
 
 function syncFilterInputs() {
   const qEl = $('[data-f="q"]');
+  const lEl = $('[data-f="local"]');
   const mEl = $('[data-f="modo"]');
   const eEl = $('[data-f="etapa"]');
   if (qEl && qEl.value !== S.f.q) qEl.value = S.f.q;
+  if (lEl) lEl.value = S.f.local;
   if (mEl) mEl.value = S.f.modo;
   if (eEl) eEl.value = S.f.etapa;
-  const hasFilter = Boolean(S.f.q || S.f.modo || S.f.turno || S.f.etapa);
+  const hasFilter = Boolean(S.f.q || S.f.local || S.f.modo || S.f.turno || S.f.etapa);
   const clearBtn = $('#clear-f');
   if (clearBtn) clearBtn.hidden = !hasFilter;
 }
@@ -285,17 +293,36 @@ function skillStatusClass(skill, job) {
 }
 
 /* ---------- Tela: Vagas ---------- */
+const REGIAO_ARARAQUARA = ['araraquara', 'sao carlos', 'matao', 'americo brasiliense', 'ibate'];
+
+function matchesLocalFilter(job, localFilter) {
+  if (!localFilter) return true;
+  const jobLoc = nk(job.location);
+  const jobModo = nk(job.modo);
+  if (localFilter === '__regiao__') {
+    return REGIAO_ARARAQUARA.some((c) => jobLoc.includes(c));
+  }
+  if (localFilter === '__remoto__') {
+    return jobModo === 'remoto' || jobLoc.includes('remoto');
+  }
+  return jobLoc.startsWith(nk(localFilter)) || jobLoc.includes(nk(localFilter));
+}
+
 function filtered() {
-  const { q, modo, turno, etapa } = S.f;
-  const k = nk(q);
+  const { q, local, modo, turno, etapa } = S.f;
+  const tokens = nk(q).split(/\s+/).filter(Boolean);
   return S.jobs
-    .filter(
-      (j) =>
-        (!k || nk([j.title, j.company, j.location, j.skills.join(' ')].join(' ')).includes(k)) &&
-        (!modo || nk(j.modo).startsWith(modo)) &&
-        (!turno || j.turno === turno) &&
-        (!etapa || j.etapa === etapa)
-    )
+    .filter((j) => {
+      if (tokens.length) {
+        const hay = nk([j.title, j.company, j.location, j.modo, j.turno, j.resumo, j.skills.join(' ')].join(' '));
+        if (!tokens.every((t) => hay.includes(t))) return false;
+      }
+      if (!matchesLocalFilter(j, local)) return false;
+      if (modo && !nk(j.modo).startsWith(modo)) return false;
+      if (turno && j.turno !== turno) return false;
+      if (etapa && j.etapa !== etapa) return false;
+      return true;
+    })
     .sort(byScore);
 }
 
@@ -415,6 +442,28 @@ function renderVagas() {
     list.map((j) => row(j, false)).join('') ||
     '<li class="empty">Nenhuma vaga com esses filtros. Use “Limpar filtros” ou colete novas vagas no Painel.</li>';
   $('#detail').innerHTML = detail(S.jobs.find((j) => j.id === S.sel));
+
+  const l = $('#f-local');
+  const cities = [
+    ...new Set(
+      S.jobs
+        .map((j) => (j.location || '').split(' - ')[0].trim())
+        .filter((c) => c && nk(c) !== 'remoto' && nk(c) !== 'brasil')
+    ),
+  ].sort();
+  if (l) {
+    l.innerHTML =
+      '<option value="">Localidade</option>' +
+      '<option value="__regiao__"' +
+      (S.f.local === '__regiao__' ? ' selected' : '') +
+      '>Araraquara e região</option>' +
+      cities
+        .map(
+          (x) =>
+            `<option value="${esc(x)}"${x === S.f.local ? ' selected' : ''}>${esc(x)}</option>`
+        )
+        .join('');
+  }
 
   const t = $('#f-turno');
   const turnos = [...new Set(S.jobs.map((j) => j.turno).filter(Boolean))].sort();
@@ -748,6 +797,19 @@ const calcMatch = (btn) => {
   );
 };
 
+async function enrichAllPending(btn) {
+  await run(btn, async () => {
+    let total = 0;
+    for (let step = 0; step < 10; step++) {
+      toast(`Enriquecendo lote com IA… (${total} processadas)`);
+      const res = await API.enrich();
+      total += res.enriched_count || 0;
+      await load();
+      if (!res.remaining || res.enriched_count === 0) break;
+    }
+    toast(`Enriquecimento concluído (${total} ${total === 1 ? 'vaga processada' : 'vagas processadas'}).`);
+  });
+}
 const nextStage = () => {
   const j = S.jobs.find((x) => x.id === S.sel);
   if (j) {
@@ -784,15 +846,23 @@ document.addEventListener('click', (e) => {
   } else if (d.act === 'match') {
     calcMatch(t);
   } else if (d.act === 'enrich') {
-    run(
-      t,
-      async () => {
-        await API.enrich();
-        await load();
-      },
-      'Enriquecimento concluído.'
-    );
+    enrichAllPending(t);
   }
+});
+
+document.querySelectorAll('[data-preset-q]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    $('#c-query').value = btn.dataset.presetQ || '';
+    $('#c-loc').value = btn.dataset.presetLoc || '';
+    $('#c-rem').checked = btn.dataset.presetRem === '1';
+  });
+});
+
+$('#clear-f')?.addEventListener('click', () => {
+  S.f = { q: '', local: '', modo: '', turno: '', etapa: '' };
+  saveFilters();
+  syncFilterInputs();
+  renderVagas();
 });
 
 document.addEventListener('change', (e) => {
@@ -815,13 +885,6 @@ document.addEventListener('input', (e) => {
   }
 });
 
-$('#clear-f')?.addEventListener('click', () => {
-  S.f = { q: '', modo: '', turno: '', etapa: '' };
-  saveFilters();
-  syncFilterInputs();
-  renderVagas();
-});
-
 $('#f-etapa').insertAdjacentHTML(
   'beforeend',
   STAGES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')
@@ -830,20 +893,44 @@ $('#f-etapa').insertAdjacentHTML(
 $('#f-coleta').addEventListener('submit', (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  run(
-    e.submitter,
-    async () => {
-      await API.collect({
-        query: f.get('query'),
-        location: f.get('location') || '',
-        remote: !!f.get('remote'),
-        enrich: !!f.get('enrich'),
-        limit: 20,
-      });
-      await load();
-    },
-    'Coleta concluída.'
-  );
+  const query = String(f.get('query') || '').trim();
+  let location = String(f.get('location') || '').trim();
+  const expandRegion = Boolean(f.get('region'));
+  if (expandRegion && nk(location).includes('araraquara') && !location.includes(',')) {
+    location = 'Araraquara, São Carlos, Matão, Américo Brasiliense';
+  }
+  const wantEnrich = Boolean(f.get('enrich'));
+  const remote = Boolean(f.get('remote'));
+
+  run(e.submitter, async () => {
+    toast(`Buscando vagas de “${query}” (${remote ? 'Remoto' : location || 'Brasil'})…`);
+    const rep = await API.collect({
+      query,
+      location,
+      remote,
+      enrich: false,
+      limit: 20,
+    });
+    await load();
+    const ins = rep.newly_inserted || 0;
+    const dup = rep.duplicates_skipped || 0;
+    if (ins === 0) {
+      toast(
+        dup > 0
+          ? `Nenhuma vaga inédita (${dup} já estavam no seu banco).`
+          : `Nenhuma vaga encontrada para “${query}” em ${location || 'Brasil'}.`
+      );
+      return;
+    }
+    toast(
+      `${ins} ${ins === 1 ? 'nova vaga coletada' : 'novas vagas coletadas'}.`,
+      false,
+      null
+    );
+    if (wantEnrich) {
+      await enrichAllPending(null);
+    }
+  });
 });
 
 $('#save-cv').addEventListener('click', (e) => saveCurriculum(e.currentTarget));
@@ -886,14 +973,7 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'r') go('curriculo');
   else if (e.key === 'v') go(v === 'funil' ? 'vagas' : 'funil');
   else if (e.key === 'e') {
-    run(
-      null,
-      async () => {
-        await API.enrich();
-        await load();
-      },
-      'Enriquecimento concluído.'
-    );
+    enrichAllPending(null);
   } else if (v === 'vagas') {
     if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault();

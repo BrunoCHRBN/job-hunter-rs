@@ -101,6 +101,120 @@ fn value_to_id_string(val: &serde_json::Value) -> String {
     }
 }
 
+/// Normaliza nomes de cidades brasileiras para o formato exato esperado pelo filtro `city=` da Gupy
+/// (Title Case com acentuação correta, pois o filtro `city` da Gupy é case-sensitive).
+pub fn normalize_city_name(raw: &str) -> String {
+    let cleaned = raw
+        .split(['-', '/'])
+        .next()
+        .unwrap_or(raw)
+        .trim();
+
+    if cleaned.is_empty() {
+        return String::new();
+    }
+
+    let ascii_key = cleaned
+        .to_lowercase()
+        .replace(['á', 'à', 'â', 'ã'], "a")
+        .replace(['é', 'ê'], "e")
+        .replace('í', "i")
+        .replace(['ó', 'ô', 'õ'], "o")
+        .replace(['ú', 'ü'], "u")
+        .replace('ç', "c");
+
+    match ascii_key.as_str() {
+        "araraquara" => return "Araraquara".to_string(),
+        "sao carlos" => return "São Carlos".to_string(),
+        "matao" => return "Matão".to_string(),
+        "americo brasiliense" => return "Américo Brasiliense".to_string(),
+        "ribeirao preto" => return "Ribeirão Preto".to_string(),
+        "sao paulo" => return "São Paulo".to_string(),
+        "sao jose do rio preto" => return "São José do Rio Preto".to_string(),
+        "jaboticabal" => return "Jaboticabal".to_string(),
+        "ibate" => return "Ibaté".to_string(),
+        "bebedouro" => return "Bebedouro".to_string(),
+        "sertãozinho" | "sertaozinho" => return "Sertãozinho".to_string(),
+        "limeira" => return "Limeira".to_string(),
+        "piracicaba" => return "Piracicaba".to_string(),
+        "rio claro" => return "Rio Claro".to_string(),
+        "campinas" => return "Campinas".to_string(),
+        "bauru" => return "Bauru".to_string(),
+        "jau" => return "Jaú".to_string(),
+        "barretos" => return "Barretos".to_string(),
+        "franca" => return "Franca".to_string(),
+        "uberlandia" => return "Uberlândia".to_string(),
+        "belo horizonte" => return "Belo Horizonte".to_string(),
+        "curitiba" => return "Curitiba".to_string(),
+        "florianopolis" => return "Florianópolis".to_string(),
+        "porto alegre" => return "Porto Alegre".to_string(),
+        "brasilia" => return "Brasília".to_string(),
+        "goiania" => return "Goiânia".to_string(),
+        _ => {}
+    }
+
+    let prepositions = ["de", "da", "do", "das", "dos", "e"];
+    cleaned
+        .split_whitespace()
+        .enumerate()
+        .map(|(idx, word)| {
+            let lower = word.to_lowercase();
+            if idx > 0 && prepositions.contains(&lower.as_str()) {
+                lower
+            } else {
+                let mut chars = lower.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Converte uma string de filtro de localização (ex: "Araraquara", "Araraquara, São Carlos", "Araraquara e região")
+/// em uma lista de cidades normalizadas para consulta na Gupy.
+pub fn parse_target_cities(location_filter: Option<&str>) -> Vec<String> {
+    let Some(raw) = location_filter else {
+        return Vec::new();
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("Brasil")
+        || trimmed.eq_ignore_ascii_case("Brazil")
+        || trimmed.eq_ignore_ascii_case("Remoto")
+    {
+        return Vec::new();
+    }
+
+    let lower = trimmed.to_lowercase();
+    if lower.contains("região") || lower.contains("regiao") {
+        return vec![
+            "Araraquara".to_string(),
+            "São Carlos".to_string(),
+            "Matão".to_string(),
+            "Américo Brasiliense".to_string(),
+        ];
+    }
+
+    trimmed
+        .split([',', ';'])
+        .map(normalize_city_name)
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+fn strip_accents_lower(s: &str) -> String {
+    s.to_lowercase()
+        .replace(['á', 'à', 'â', 'ã'], "a")
+        .replace(['é', 'ê'], "e")
+        .replace('í', "i")
+        .replace(['ó', 'ô', 'õ'], "o")
+        .replace(['ú', 'ü'], "u")
+        .replace('ç', "c")
+}
+
 fn extract_next_data_jobs(html: &str) -> Option<GupyApiResponse> {
     let marker = "<script id=\"__NEXT_DATA__\"";
     let start_idx = html.find(marker)?;
@@ -120,47 +234,30 @@ fn extract_next_data_jobs(html: &str) -> Option<GupyApiResponse> {
     serde_json::from_value::<GupyApiResponse>(job_list_val).ok()
 }
 
-async fn request_gupy_payload(
+async fn request_gupy_portal(
     client: &Client,
-    encoded_query: &str,
+    query: &str,
+    cities: &[String],
+    remote_only: bool,
     effective_limit: usize,
 ) -> Result<GupyApiResponse> {
-    let api_url = format!(
-        "https://portal.api.gupy.io/api/v1/jobs?jobName={}&limit={}&offset=0",
-        encoded_query, effective_limit
+    let mut url = format!(
+        "https://portal.gupy.io/job-search/term={}",
+        urlencoding::encode(query.trim())
     );
 
-    debug!("Consultando Gupy API: {}", api_url);
-
-    let resp = client
-        .get(&api_url)
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (X11; Linux x86_64) JobHunterRS/0.1",
-        )
-        .header("Accept", "application/json")
-        .send()
-        .await;
-
-    if let Ok(r) = resp {
-        if r.status().is_success() {
-            if let Ok(payload) = r.json::<GupyApiResponse>().await {
-                return Ok(payload);
-            }
-        } else {
-            debug!(
-                "Endpoint legado portal.api.gupy.io retornou {}, usando portal.gupy.io SSR JSON...",
-                r.status()
-            );
-        }
+    for city in cities {
+        url.push_str(&format!("&city={}", urlencoding::encode(city)));
     }
 
-    let portal_url = format!(
-        "https://portal.gupy.io/job-search/term={}",
-        encoded_query
-    );
+    if remote_only {
+        url.push_str("&workplaceTypes=remote");
+    }
+
+    debug!("Consultando Gupy Portal SSR: {}", url);
+
     let portal_resp = client
-        .get(&portal_url)
+        .get(&url)
         .header(
             "User-Agent",
             "Mozilla/5.0 (X11; Linux x86_64) JobHunterRS/0.1",
@@ -193,31 +290,22 @@ pub async fn fetch_gupy_jobs(
     limit: usize,
     remote_only: bool,
 ) -> Result<Vec<RawJobListing>> {
-    let search_term = match location_filter {
-        Some(loc)
-            if !loc.trim().is_empty()
-                && !loc.trim().eq_ignore_ascii_case("Brasil")
-                && !loc.trim().eq_ignore_ascii_case("Brazil") =>
-        {
-            format!("{} {}", query.trim(), loc.trim())
-        }
-        _ => query.trim().to_string(),
-    };
-
-    let encoded_query = urlencoding::encode(&search_term);
     let effective_limit = limit.clamp(1, 100);
+    let target_cities = parse_target_cities(location_filter);
 
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .context("Falha ao criar cliente HTTP para a Gupy")?;
 
-    let mut payload = request_gupy_payload(&client, &encoded_query, effective_limit).await?;
-
-    if payload.data.is_empty() && search_term != query.trim() {
-        let fallback_encoded = urlencoding::encode(query.trim());
-        payload = request_gupy_payload(&client, &fallback_encoded, effective_limit).await?;
-    }
+    let payload = request_gupy_portal(
+        &client,
+        query,
+        &target_cities,
+        remote_only,
+        effective_limit,
+    )
+    .await?;
 
     let mut listings = Vec::new();
 
@@ -240,6 +328,17 @@ pub async fn fetch_gupy_jobs(
             .unwrap_or_else(|| "Brasil".to_string())
             .trim()
             .to_string();
+
+        /* Se o usuário especificou cidade(s) e não pediu apenas remoto, garante que a vaga pertence à cidade solicitada */
+        if !target_cities.is_empty() && !remote_only {
+            let item_city_norm = strip_accents_lower(&city);
+            let matches_city = target_cities
+                .iter()
+                .any(|tc| strip_accents_lower(tc) == item_city_norm);
+            if !matches_city && !is_remote {
+                continue;
+            }
+        }
 
         let location = match (city.is_empty(), state.is_empty(), is_remote) {
             (false, false, true) => format!("{} - {} (Remoto)", city, state),
@@ -291,6 +390,12 @@ pub async fn fetch_gupy_jobs(
         });
     }
 
-    info!("Coletor Gupy retornou {} vagas para '{}'", listings.len(), query);
+    info!(
+        "Coletor Gupy retornou {} vagas para '{}' (cidades: {:?}, remoto: {})",
+        listings.len(),
+        query,
+        target_cities,
+        remote_only
+    );
     Ok(listings)
 }

@@ -27,12 +27,20 @@
         <form id="f-coleta" class="card">
           <h2>Coletar vagas</h2>
           <div class="row" style="margin-top:12px">
-            <label class="grow">Cargo ou competência<input name="query" required placeholder="Operador de Sistemas"></label>
-            <label class="grow">Localidade<input name="location" placeholder="Araraquara"></label>
+            <label class="grow">Cargo ou competência<input name="query" id="c-query" required placeholder="Ex: Operador de Sistemas, Auxiliar, Suporte TI, Python"></label>
+            <label class="grow">Localidade (cidade ou cidades separadas por vírgula)<input name="location" id="c-loc" value="Araraquara" placeholder="Ex: Araraquara, São Carlos"></label>
+          </div>
+          <div class="chips" style="margin-top:8px">
+            <span class="mut" style="font-size:12px;align-self:center">Sugestões rápidas:</span>
+            <button type="button" class="chip-btn" data-preset-q="Operador" data-preset-loc="Araraquara, São Carlos, Matão">Operador (Araraquara e região)</button>
+            <button type="button" class="chip-btn" data-preset-q="Auxiliar" data-preset-loc="Araraquara">Auxiliar (Araraquara)</button>
+            <button type="button" class="chip-btn" data-preset-q="Técnico" data-preset-loc="Araraquara, São Carlos">Técnico / TI (Região)</button>
+            <button type="button" class="chip-btn" data-preset-q="Python" data-preset-loc="" data-preset-rem="1">Python (Remoto)</button>
           </div>
           <div class="between row">
             <div class="row">
-              <label class="chk"><input type="checkbox" name="remote">Apenas remoto</label>
+              <label class="chk"><input type="checkbox" name="remote" id="c-rem">Apenas remoto</label>
+              <label class="chk"><input type="checkbox" name="region" id="c-reg">Expandir para região (São Carlos, Matão, Américo)</label>
               <label class="chk"><input type="checkbox" name="enrich" checked>Enriquecer com IA ao coletar</label>
             </div>
             <button class="btn primary" type="submit">Coletar vagas</button>
@@ -55,7 +63,10 @@
   <!-- VAGAS: travada na altura da viewport, busca/filtros no topo, lista e detalhe com scroll interno -->
   <section id="v-vagas" class="vagas-view" hidden>
     <div class="filters">
-      <input type="search" data-f="q" placeholder="Buscar por cargo, empresa ou competência ( / ou Ctrl+K )" aria-label="Buscar vagas">
+      <input type="search" data-f="q" placeholder="Buscar por cargo, empresa, cidade ou competência ( / ou Ctrl+K )" aria-label="Buscar vagas">
+      <select data-f="local" id="f-local" class="sel-fixed" aria-label="Localidade">
+        <option value="">Localidade</option>
+      </select>
       <select data-f="modo" aria-label="Modalidade">
         <option value="">Modalidade</option>
         <option value="remoto">Remoto</option>
