@@ -49,8 +49,8 @@ const API = {
   jobs: () => req('GET', '/api/jobs'),
   setStatus: (id, st) => req('POST', `/api/jobs/${id}/status`, { status: st }),
   match: (id) => req('POST', `/api/jobs/${id}/match`),
-  collect: (b) => req('POST', '/api/collect', b),
-  enrich: () => req('POST', '/api/enrich'),
+  collect: (b) => req('POST', '/api/jobs/fetch', b),
+  enrich: () => req('POST', '/api/jobs/enrich'),
   resume: () => req('GET', '/api/resume'),
   saveResume: (content) => req('PUT', '/api/resume', { content }),
 };
