@@ -27,27 +27,33 @@ O **Job Hunter RS** opera a partir de um único executável em Rust que comparti
 ├── .env.example               # Template de variáveis de ambiente
 ├── curriculo.md               # Currículo base em Markdown utilizado no Ranking e ATS
 ├── migrations/
-│   └── 001_init.sql           # Schema SQLite (tabela `jobs` e índices de consulta)
+│   ├── 001_init.sql           # Schema SQLite inicial (tabela `jobs` e índices)
+│   ├── 002_dossie.sql         # Dossiê v2 (`dossier_json` e `fit_json`)
+│   └── 003_automation.sql     # Automação Zero-Touch (`candidate_profile` e `saved_searches`)
 ├── scripts/
-│   └── jobspy_bridge.py       # Bridge Python opcional (LinkedIn, Indeed, Glassdoor via JobSpy)
+│   └── jobspy_bridge.py       # Bridge Python (LinkedIn, Indeed, Glassdoor via python-jobspy)
+├── requirements.txt           # Dependências Python (.venv com python-jobspy)
 ├── static/
-│   ├── tokens.css             # Sistema de tokens CSS Anti-AI-Slop (Tema Claro/Escuro)
-│   ├── index.html             # App Shell persistente 100vh (Master-Detail + Kanban + Modal ATS)
-│   └── app.js                 # Lógica de estado, atalhos keyboard-first e consumo REST
+│   ├── styles.css             # Estrutura base e tokens CSS (Tema Claro/Escuro)
+│   ├── identity.css           # Identidade visual v2 (Ciano funcional, vereditos e responsividade)
+│   ├── icon.svg               # Ícone vetorial oficial do aplicativo Desktop
+│   ├── index.html             # App Shell de 4 visões (Painel, Vagas, Funil Kanban e Currículo/Perfil)
+│   └── app.js                 # Lógica de Dossiê v2, Automação, Drag-and-Drop e atalhos
 └── src/
-    ├── main.rs                # Entrypoint CLI (clap) + Interface TUI (ratatui + crossterm)
+    ├── main.rs                # Entrypoint (abre Web + Navegador por padrão) + CLI + TUI (ratatui)
+    ├── automation.rs          # Worker Autônomo Zero-Touch (Rondas + Enriquecimento + Auto-Match)
     ├── web.rs                 # Servidor HTTP embutido (axum) e rotas REST JSON (/api/*)
-    ├── config.rs              # Carregamento e validação de variáveis de ambiente (.env)
-    ├── models.rs              # Estruturas de domínio, DTOs e filtros
+    ├── config.rs              # Configuração (.env) e detecção automática de `.venv/bin/python`
+    ├── models.rs              # Dossiê v2 (`Dossier`, `Provenance`, `FitAxes`, `verify_evidence`)
     ├── db.rs                  # Persistência SQLite (sqlx), hash blake3 e cosine_similarity
     ├── collectors/
-    │   ├── mod.rs             # Orquestração concorrente (tokio::join!) de coletores
-    │   ├── gupy.rs            # Coletor HTTP nativo para a Gupy com higienização de HTML
+    │   ├── mod.rs             # Orquestração concorrente (tokio::join!) + Pré-Filtro de exclusão
+    │   ├── gupy.rs            # Coletor nativo Gupy com normalização multi-cidade e acentos
     │   └── jobspy.rs          # Coletor assíncrono via subprocesso Python (JobSpy)
     └── gemini/
         ├── mod.rs             # Módulo de Inteligência Artificial
         ├── client.rs          # Cliente HTTP REST v1beta (reqwest) com fallback resiliente
-        └── prompts.rs         # System instructions otimizadas para JSON estrito e ATS
+        └── prompts.rs         # Prompts de Dossiê v2 e Match dinâmico guiado pelo Perfil Editável
 ```
 
 ---
@@ -136,12 +142,19 @@ Para operação 100% em terminal via SSH ou ambientes sem navegador, o subcomand
 
 Toda comunicação com o Google AI Studio é feita via chamadas HTTP diretas (`reqwest` + `rustls-tls`) para `https://generativelanguage.googleapis.com/v1beta/models`, utilizando `responseMimeType: "application/json"` e definição estrita de estrutura JSON no `systemInstruction`:
 
-1. **Extração Estruturada em Lote (`extract_jobs_batch`):**
-   - Processa lotes de 5 a 10 vagas por requisição identificando: `work_model`, `contract_type`, `seniority`, `shift_schedule` (ex: `Comercial (5x2)`, `Escala 6x2`, `12x36`, `Turnos Rotativos`), `required_skills`, `salary_estimate_brl`, `summary` e `red_flags`.
+1. **Extração Estruturada em Lote + Dossiê v2 (`extract_jobs_batch`):**
+   - Processa lotes de até 5 vagas por requisição extraindo: `work_model`, `contract_type`, `seniority`, `shift_schedule`, `required_skills`, `salary_estimate_brl`, `summary`, `red_flags` e o **Dossiê v2 (`dossier`)**:
+     - **Origem de cada dado (`provenance`):** marca `work_model`, `contract_type`, `seniority`, `shift_schedule` e `salary` como `explicit` (acompanhado do trecho literal copiado da vaga), `inferred` ou `absent`.
+     - **Verificação Anti-Alucinação em Código (`Dossier::verify_evidence`):** valida se a citação `evidence` realmente existe na descrição original; caso não exista, descarta a citação e rebaixa `explicit` para `inferred`.
+     - **O que o texto não diz (`Dossier::missing`):** calcula automaticamente as omissões da vaga (`salario`, `escala`, `modalidade`, `contrato`, `beneficios`).
+     - **Seções Estruturadas (`sections`) e Alertas por Gravidade (`alerts`):** organiza `responsibilities`, `required`, `nice_to_have`, `benefits` e classifica alertas em `critical`, `warning` ou `info`.
 2. **Indexação Vetorial (`generate_embedding`):**
    - Gera vetores densos `Vec<f32>` via endpoint `:embedContent` e persiste em `embedding_json` no SQLite.
-3. **Análise Profunda de Compatibilidade e ATS (`analyze_job_match`):**
-   - Cruza o `curriculo.md` com a vaga alvo, calculando o `match_score` (0 a 100), `matching_skills`, `missing_skills`, `ats_suggestions`, `shift_and_location_verdict` e `detailed_analysis_markdown`.
+3. **Análise Profunda de Compatibilidade, Veredito e 4 Eixos (`analyze_job_match_with_profile`):**
+   - Injeta dinamicamente o **Perfil de Critérios do Candidato (`candidate_profile`)** (cidade base, região aceita, escalas e pretensão salarial) junto ao `curriculo.md`.
+   - Devolve o **Veredito Conservador (`verdict_kind()`: `apply`, `maybe` ou `skip`)** com 3 motivos objetivos, avaliação nos **4 Eixos (`skills`, `logistics`, `seniority`, `salary`)** e **Lacunas com Ação Sugerida (`has_unlisted`, `study`, `ignore`)**.
+4. **Worker Autônomo Zero-Touch (`src/automation.rs`):**
+   - Roda em segundo plano executando as **Rondas de Busca Salvas (`saved_searches`)** em paralelo na Gupy e no JobSpy (`.venv`), filtrando termos excluídos (`exclude_terms`), enriquecendo lotes pendentes, disparando **Auto-Match** para vagas com similaridade semântica $\ge 62\%$ e enviando notificações desktop (`notify-send`) para vagas `apply`.
 
 ---
 

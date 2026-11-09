@@ -13,5 +13,7 @@
 
 # Python virtualenvs & cache
 .venv/
+/job-hunter
+/job-hunter-rs
 __pycache__/
 *.pyc
