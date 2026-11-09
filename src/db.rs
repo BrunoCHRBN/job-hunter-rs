@@ -11,6 +11,8 @@ use crate::models::{
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
 const MIGRATION_002: &str = include_str!("../migrations/002_dossie.sql");
 
+const JOB_SELECT_COLUMNS: &str = "id, dedup_hash, external_id, source, title, company, location, url, raw_description, is_enriched, work_model, contract_type, seniority, shift_schedule, salary_estimate_brl, required_skills_json, red_flags_json, ai_summary, embedding_json, application_status, match_score, match_analysis_md, published_at, created_at, dossier_json, fit_json";
+
 /// Gera o hash blake3 determinístico para deduplicação de vagas:
 /// `format!("{}|{}|{}", company.trim().to_lowercase(), title.trim().to_lowercase(), location.trim().to_lowercase())`
 pub fn compute_dedup_hash(company: &str, title: &str, location: &str) -> String {
@@ -146,18 +148,15 @@ impl Database {
     }
 
     pub async fn get_unenriched_jobs(&self, limit: i64) -> Result<Vec<JobRecord>> {
-        let rows = sqlx::query_as::<_, JobRecord>(
-            r#"
-            SELECT * FROM jobs
-            WHERE is_enriched = 0
-            ORDER BY id ASC
-            LIMIT ?1
-            "#,
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .context("Erro ao buscar vagas pendentes de enriquecimento")?;
+        let sql = format!(
+            "SELECT {} FROM jobs WHERE is_enriched = 0 ORDER BY id ASC LIMIT ?1",
+            JOB_SELECT_COLUMNS
+        );
+        let rows = sqlx::query_as::<_, JobRecord>(&sql)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .context("Erro ao buscar vagas pendentes de enriquecimento")?;
 
         Ok(rows)
     }
@@ -285,7 +284,8 @@ impl Database {
     }
 
     pub async fn get_job_by_id(&self, job_id: i64) -> Result<Option<JobRecord>> {
-        let record = sqlx::query_as::<_, JobRecord>("SELECT * FROM jobs WHERE id = ?1")
+        let sql = format!("SELECT {} FROM jobs WHERE id = ?1", JOB_SELECT_COLUMNS);
+        let record = sqlx::query_as::<_, JobRecord>(&sql)
             .bind(job_id)
             .fetch_optional(&self.pool)
             .await
@@ -294,15 +294,14 @@ impl Database {
     }
 
     pub async fn list_jobs(&self, filter: &JobFilter) -> Result<Vec<JobRecord>> {
-        let all_jobs = sqlx::query_as::<_, JobRecord>(
-            r#"
-            SELECT * FROM jobs
-            ORDER BY COALESCE(match_score, -1.0) DESC, is_enriched DESC, id DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Erro ao listar vagas do SQLite")?;
+        let sql = format!(
+            "SELECT {} FROM jobs ORDER BY COALESCE(match_score, -1.0) DESC, is_enriched DESC, id DESC",
+            JOB_SELECT_COLUMNS
+        );
+        let all_jobs = sqlx::query_as::<_, JobRecord>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .context("Erro ao listar vagas do SQLite")?;
 
         let filtered = all_jobs
             .into_iter()
@@ -370,15 +369,14 @@ impl Database {
         resume_embedding: &[f32],
         top_k: usize,
     ) -> Result<Vec<(JobRecord, f32)>> {
-        let jobs = sqlx::query_as::<_, JobRecord>(
-            r#"
-            SELECT * FROM jobs
-            WHERE is_enriched = 1 AND embedding_json IS NOT NULL
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Erro ao carregar vagas enriquecidas para ranking semântico")?;
+        let sql = format!(
+            "SELECT {} FROM jobs WHERE is_enriched = 1 AND embedding_json IS NOT NULL",
+            JOB_SELECT_COLUMNS
+        );
+        let jobs = sqlx::query_as::<_, JobRecord>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .context("Erro ao carregar vagas enriquecidas para ranking semântico")?;
 
         let mut scored: Vec<(JobRecord, f32)> = jobs
             .into_iter()

@@ -19,15 +19,22 @@ const EMPTY_STAGE_GUIDE = {
 };
 
 async function req(method, url, body) {
+  const opts = {
+    method,
+    cache: 'no-store',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  };
   let r;
   try {
-    r = await fetch(url, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (netErr) {
-    throw new Error('Falha de comunicação com o servidor local. Recarregue a página (F5) e tente novamente.');
+    r = await fetch(url, opts);
+  } catch (firstErr) {
+    await new Promise((res) => setTimeout(res, 350));
+    try {
+      r = await fetch(url, opts);
+    } catch (netErr) {
+      throw new Error('Falha de comunicação com o servidor local. Recarregue a página (F5) e tente novamente.');
+    }
   }
   const t = await r.text();
   if (!r.ok) throw new Error(t || 'Erro ' + r.status);
