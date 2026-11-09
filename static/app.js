@@ -505,6 +505,48 @@ function renderDossierSections(j) {
   </div>`;
 }
 
+function renderAlertsBlock(j) {
+  const alerts = j.dossier && Array.isArray(j.dossier.alerts) ? j.dossier.alerts : [];
+  if (alerts.length) {
+    const SEV_TAG = { critical: 'Crítico', warning: 'Atenção', info: 'Observação' };
+    return `<div>
+      <h3>Alertas e pontos de atenção</h3>
+      <div class="alert-list">
+        ${alerts
+          .map((al) => {
+            const sev = al.severity || 'warning';
+            const quote = cleanVal(al.evidence);
+            return `<div class="alert-item ${esc(sev)}">
+              <div><strong>${esc(SEV_TAG[sev] || 'Atenção')}:</strong> ${esc(al.text)}</div>
+              ${quote ? `<div class="prov-quote">“${esc(quote)}”</div>` : ''}
+            </div>`;
+          })
+          .join('')}
+      </div>
+    </div>`;
+  }
+  if (j.flags.length) {
+    return `<div class="alert"><h3>Pontos de atenção</h3>${ul(j.flags)}</div>`;
+  }
+  return '';
+}
+
+function renderUnifiedSkills(j) {
+  const seen = new Set();
+  const unified = [];
+  for (const sk of [...j.skills, ...j.an.falta]) {
+    const k = nk(sk);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    unified.push(sk);
+  }
+  if (!unified.length) return '';
+  return `<div>
+    <h3>Competências exigidas e aderência <span class="mut" style="font-weight:400;font-size:12px">(verde: no currículo · vermelho: lacuna · neutro: requisito)</span></h3>
+    <div class="chips">${unified.map((x) => chip(x, skillStatusClass(x, j))).join('')}</div>
+  </div>`;
+}
+
 function tabBody(j) {
   if (S.tab === 'desc') {
     return `<p class="raw">${esc(j.desc) || '<span class="mut">Sem descrição disponível.</span>'}</p>`;
@@ -516,45 +558,34 @@ function tabBody(j) {
     }
     return `${renderVerdictBanner(j)}
       ${renderFitAxes(j)}
-      ${a.veredito ? `<div class="verdict-box"><h3>Veredito de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
+      ${a.veredito ? `<div class="verdict-box"><h3>Logística de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
       ${renderGapsActions(j)}
       <div class="two">
-        <div><h3>Você já tem</h3><div class="chips">${a.ok.map((x) => chip(x, 'ok')).join('') || '<span class="mut">Nada identificado</span>'}</div></div>
+        <div><h3>Você já comprova</h3><div class="chips">${a.ok.map((x) => chip(x, 'ok')).join('') || '<span class="mut">Nada identificado</span>'}</div></div>
         <div><h3>Falta no currículo</h3><div class="chips">${a.falta.map((x) => chip(x, 'bad')).join('') || '<span class="mut">Nenhum gap crítico</span>'}</div></div>
       </div>
       ${a.ats.length ? `<div><h3>Ajustes sugeridos para o ATS</h3>${ul(a.ats)}</div>` : ''}
       ${a.md ? `<div><h3>Análise detalhada</h3>${a.md.split(/\n{2,}/).map((p) => `<p class="raw" style="margin-top:8px">${esc(p)}</p>`).join('')}</div>` : ''}`;
   }
 
-  /* Visão Geral: Dossiê v2 completo + veredito + competências coloridas */
-  const hasMatch = j.score != null || a.veredito || a.falta.length > 0;
+  /* Dossiê da Vaga (Visão Geral): placa de veredito, 4 eixos, ficha de origem, o que não diz, alertas e competências unificadas */
   return `${j.enriched ? '' : '<p class="mut">Esta vaga ainda não foi enriquecida pela IA. Use “Enriquecer pendentes” no Painel.</p>'}
     ${renderVerdictBanner(j)}
+    ${renderFitAxes(j)}
     ${!j.verdictKind && a.veredito ? `<div class="verdict-box"><h3>Compatibilidade de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
     ${j.resumo ? `<div><h3>Resumo da vaga</h3><p>${esc(j.resumo)}</p></div>` : ''}
     ${renderProvenanceSheet(j)}
     ${renderMissingBlock(j)}
-    ${j.flags.length ? `<div class="alert"><h3>Pontos de atenção</h3>${ul(j.flags)}</div>` : ''}
+    ${renderAlertsBlock(j)}
     ${renderDossierSections(j)}
-    ${
-      j.skills.length
-        ? `<div>
-            <h3>Competências exigidas <span class="mut" style="font-weight:400;font-size:12px">(verde: consta no currículo · vermelho: gap identificado)</span></h3>
-            <div class="chips">${j.skills.map((x) => chip(x, skillStatusClass(x, j))).join('')}</div>
-          </div>`
-        : ''
-    }
-    ${
-      hasMatch && a.falta.length
-        ? `<div><h3>Falta no seu currículo para esta vaga</h3><div class="chips">${a.falta.map((x) => chip(x, 'bad')).join('')}</div></div>`
-        : ''
-    }`;
+    ${renderGapsActions(j)}
+    ${renderUnifiedSkills(j)}`;
 }
 
 function detail(j) {
   if (!j) return '<p class="empty">Selecione uma vaga na lista à esquerda para inspecionar os detalhes.</p>';
   const tabs = [
-    ['geral', 'Visão geral'],
+    ['geral', 'Dossiê da vaga'],
     ['match', 'Análise ATS'],
     ['desc', 'Descrição original'],
   ];
@@ -567,6 +598,8 @@ function detail(j) {
       ? 'Recalcular match'
       : 'Calcular match';
   const subMeta = [j.location, j.source ? `Fonte: ${j.source}` : ''].filter(Boolean).join(' · ');
+  const VERDICT_SHORT = { apply: 'Aplicar', maybe: 'Avaliar', skip: 'Pular' };
+  const bigSub = (j.verdictKind && VERDICT_SHORT[j.verdictKind]) || 'match';
 
   return `<div class="d-head">
       <span class="logo" style="background:hsl(${hue} 45% 92%);color:hsl(${hue} 65% 28%);border-color:hsl(${hue} 40% 80%)" aria-hidden="true">${esc(j.company[0] || '?')}</span>
@@ -575,7 +608,7 @@ function detail(j) {
         <p>${esc(j.company)}</p>
         ${subMeta ? `<p class="mut">${esc(subMeta)}</p>` : ''}
       </div>
-      ${j.score != null ? `<div class="big ${cls(j.score)}"><b>${j.score}%</b><span>match</span></div>` : ''}
+      ${j.score != null ? `<div class="big ${cls(j.score)}"><b>${j.score}%</b><span>${esc(bigSub)}</span></div>` : ''}
     </div>
     <div class="chips">
       ${[j.modo, j.turno, j.contrato, j.nivel, j.salario].map((x) => chip(x)).join('')}
@@ -583,12 +616,19 @@ function detail(j) {
     </div>
     <div class="d-act">
       ${nextAct ? `<button type="button" class="btn primary" data-stage-to="${nextAct[0]}">${nextAct[1]}</button>` : ''}
-      ${j.url ? `<a class="btn${nextAct ? '' : ' primary'}" href="${esc(j.url)}" target="_blank" rel="noopener">Abrir vaga ↗</a>` : ''}
-      <button type="button" class="btn" data-act="match" ${isCalculating ? 'disabled' : ''}>${matchLabel}</button>
-      <select data-act="etapa" aria-label="Mudar etapa manualmente">
-        ${STAGES.map(([k, l]) => `<option value="${k}"${k === j.etapa ? ' selected' : ''}>Etapa: ${l}</option>`).join('')}
-      </select>
-      ${j.etapa !== 'descartada' ? `<button type="button" class="btn ghost danger" data-stage-to="descartada">Descartar</button>` : ''}
+      <button type="button" class="btn${nextAct ? '' : ' primary'}" data-act="match" ${isCalculating ? 'disabled' : ''}>${matchLabel}</button>
+      <details class="more-menu">
+        <summary class="btn">Mais ▾</summary>
+        <div class="more-pop">
+          ${j.url ? `<a class="btn" href="${esc(j.url)}" target="_blank" rel="noopener">Abrir vaga original ↗</a>` : ''}
+          <label class="mut" style="font-size:11px;padding:4px 6px 0">Mudar etapa no funil
+            <select data-act="etapa" aria-label="Mudar etapa manualmente">
+              ${STAGES.map(([k, l]) => `<option value="${k}"${k === j.etapa ? ' selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </label>
+          ${j.etapa !== 'descartada' ? `<button type="button" class="btn danger" data-stage-to="descartada">Descartar vaga</button>` : ''}
+        </div>
+      </details>
     </div>
     <div class="tabs" role="tablist">
       ${tabs.map(([k, l]) => `<button type="button" role="tab" aria-selected="${S.tab === k}" data-tab="${k}">${l}</button>`).join('')}
@@ -673,16 +713,20 @@ function renderPainel() {
     pendEl.hidden = true;
   }
 
-  /* Card de Próxima Ação Recomendada */
+  /* Card de Próxima Ação Recomendada (sem estourar texto no botão) */
   const nextEl = $('#next-action');
   if (n === 0) {
     nextEl.innerHTML = `<h2>Próximo passo</h2><p class="mut" style="margin-top:6px">Use o formulário ao lado para coletar suas primeiras vagas na Gupy e JobSpy.</p>`;
   } else if (withoutMatch.length > 0) {
     const target = withoutMatch[0];
     nextEl.innerHTML = `<h2>Próxima ação recomendada</h2>
-      <p class="mut" style="margin:6px 0 12px"><strong>${withoutMatch.length} ${withoutMatch.length === 1 ? 'vaga está' : 'vagas estão'} sem análise de match</strong> contra o seu currículo.</p>
+      <p class="mut" style="margin-top:6px"><strong>${withoutMatch.length} ${withoutMatch.length === 1 ? 'vaga está' : 'vagas estão'} sem análise de match</strong> contra o seu currículo.</p>
+      <div class="next-job-preview">
+        <strong title="${esc(target.title)}">${esc(target.title)}</strong>
+        <span class="mut" style="font-size:12px">${esc([target.company, target.location].filter(Boolean).join(' · '))}</span>
+      </div>
       <div class="row">
-        <button type="button" class="btn primary" data-open="${target.id}">Avaliar “${esc(target.title.slice(0, 28))}”</button>
+        <button type="button" class="btn primary" data-open="${target.id}">Avaliar próxima vaga →</button>
       </div>`;
   } else {
     nextEl.innerHTML = `<h2>Triagem em dia</h2><p class="mut" style="margin-top:6px">Todas as vagas ativas já possuem resumo estruturado e nota de compatibilidade.</p>`;
@@ -704,10 +748,10 @@ function renderPainel() {
     </div>`;
 }
 
-/* ---------- Tela: Funil (Com recolhimento de Descoberta/Descartada e Drag-and-Drop) ---------- */
+/* ---------- Tela: Funil (Coluna Descoberta e Descartada recolhidas por padrão + Drag-and-Drop) ---------- */
 function renderFunil() {
   const COLLAPSIBLE = ['descoberta', 'descartada'];
-  const LIMIT = 5;
+  const LIMIT = 3;
 
   $('#board').innerHTML = STAGES.map(([k, l], i) => {
     const allStageJobs = S.jobs.filter((j) => j.etapa === k).sort(byScore);

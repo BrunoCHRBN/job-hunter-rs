@@ -21,6 +21,7 @@ use crate::models::{JobFilter, JobRecord};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
+const IDENTITY_CSS: &str = include_str!("../static/identity.css");
 const APP_JS: &str = include_str!("../static/app.js");
 
 #[derive(Clone)]
@@ -82,6 +83,8 @@ pub async fn run_web_server(cfg: AppConfig, db: Database, port: u16) -> Result<(
         .route("/index.html", get(serve_index))
         .route("/styles.css", get(serve_css))
         .route("/static/styles.css", get(serve_css))
+        .route("/identity.css", get(serve_identity_css))
+        .route("/static/identity.css", get(serve_identity_css))
         .route("/app.js", get(serve_js))
         .route("/static/app.js", get(serve_js))
         .route("/api/stats", get(api_stats))
@@ -133,6 +136,17 @@ async fn serve_css() -> Response {
             (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
         ],
         STYLES_CSS,
+    )
+        .into_response()
+}
+
+async fn serve_identity_css() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
+        ],
+        IDENTITY_CSS,
     )
         .into_response()
 }

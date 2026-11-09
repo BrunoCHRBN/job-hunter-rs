@@ -1,0 +1,96 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap');
+/* Job Hunter — identidade visual v2 (moderna, vibrante, responsiva).
+   Carregue DEPOIS de styles.css:  <link rel="stylesheet" href="identity.css">
+   Cor com função: ciano = ação e seleção; verde/âmbar/vermelho = veredito. Sem gradientes decorativos. */
+
+:root{
+  --font:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --bg:#eef2f7;--surface:#fff;--surface-2:#f5f8fc;--text:#0e1b2c;--text-2:#556780;--border:#dde5ef;
+  --brand:#00b4d8;--on-brand:#03222c;--accent:#007c99;--accent-bg:#d9f4fb;--signal:#22d3ee;
+  --ok:#0f8a43;--ok-bg:#dcf5e6;--warn:#b45309;--warn-bg:#fff1d6;--amber:#ffb020;--bad:#d92d20;--bad-bg:#fde4e1;
+  --nav:#0b1b2b;--nav-text:#9fb2c8;
+  --r:12px;--shadow:0 1px 2px rgba(11,27,43,.06),0 10px 24px -14px rgba(11,27,43,.22)}
+:root[data-theme=dark]{
+  --bg:#08111c;--surface:#111f30;--surface-2:#0d1928;--text:#e8eef6;--text-2:#8fa3ba;--border:#22344a;
+  --brand:#22d3ee;--on-brand:#03222c;--accent:#4fdcf2;--accent-bg:#0f3441;
+  --ok:#34d27b;--ok-bg:#12352a;--warn:#fbbf24;--warn-bg:#3a2e10;--bad:#ff7a70;--bad-bg:#3d1d1b;
+  --nav:#050b13;--shadow:0 1px 2px rgba(0,0,0,.4),0 10px 24px -14px rgba(0,0,0,.6)}
+:root{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+body{font-size:15px;-webkit-font-smoothing:antialiased}
+h1{font-size:clamp(20px,2.4vw,26px)}h1,h2{font-weight:700;letter-spacing:-.01em}h3{font-weight:600}
+.stats dd{font-size:clamp(24px,3vw,32px);font-weight:700;letter-spacing:-.02em}
+
+/* cabeçalho: tinta escura com marca em ciano */
+.nav{background:var(--nav);border-bottom:0}
+.brand{color:#fff;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.brand::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--signal)}
+.nav nav{gap:6px;align-items:center}
+.nav nav a{height:36px;padding:0 14px;border-radius:9px;border-bottom:0;color:var(--nav-text)}
+.nav nav a:hover{color:#fff;background:rgba(255,255,255,.06)}
+.nav nav a[aria-current=page]{color:#fff;background:rgba(34,211,238,.16)}
+.nav .btn.ghost{color:var(--nav-text)}.nav .btn.ghost:hover{color:#fff;background:rgba(255,255,255,.06)}
+
+/* superfícies e controles */
+.card,.k,.col,.stats>div{border-radius:var(--r);box-shadow:var(--shadow)}
+.col,.k{box-shadow:none}
+.btn,input,select,textarea{border-radius:10px}
+.btn{border-color:var(--border);color:var(--text);background:var(--surface);font-weight:600}
+.btn:hover{background:var(--surface-2);border-color:var(--text-2)}
+.btn.primary{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
+.btn.primary:hover{filter:brightness(1.08);background:var(--brand)}
+input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 28%,transparent);outline:0}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+a{color:var(--accent)}
+.chip{border-radius:999px;background:var(--surface-2)}
+.logo{display:none}
+.job-t strong{color:var(--text)}
+.job:hover{background:var(--surface-2)}.job.on{background:var(--accent-bg)}
+
+/* veredito vibrante: faixa na lista, selo sólido e placa no detalhe */
+.job{border-left-width:4px}
+.job:has(.score.hi){border-left-color:var(--ok)}
+.job:has(.score.mid){border-left-color:var(--amber)}
+.job:has(.score.lo){border-left-color:var(--border)}
+.hi{background:var(--ok);color:#fff}
+.mid{background:var(--amber);color:#2b1a00}
+.lo{background:transparent;color:var(--text-2);box-shadow:inset 0 0 0 1px var(--border)}
+.score{border-radius:999px;padding:2px 10px}
+.big{border-radius:var(--r);padding:10px 18px}.big b{font-size:30px;letter-spacing:-.02em}
+.tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--brand)}
+.alert{background:var(--warn-bg);border-left:4px solid var(--amber);color:var(--text)}
+
+/* funil: cada etapa tem a sua cor */
+.board>.col{border-top:3px solid var(--text-2);align-content:start}
+.board>.col:nth-child(2){border-top-color:var(--brand)}
+.board>.col:nth-child(3){border-top-color:#3b82f6}
+.board>.col:nth-child(4){border-top-color:var(--ok)}
+.board>.col:nth-child(5){border-top-color:var(--border)}
+
+/* correção: rótulo com <code> quebrava em coluna (Markdown (curriculo.md)) */
+label:not(.chk){display:block}
+label:not(.chk)>input:not([type=checkbox]),label:not(.chk)>select,label:not(.chk)>textarea{display:block;width:100%;margin-top:4px}
+
+/* responsividade */
+@media (min-width:1600px){main,.nav-in{max-width:1480px}}
+@media (max-width:1100px){.cols{grid-template-columns:1fr}}
+@media (max-width:900px){
+  .split,.two{grid-template-columns:1fr}.scroll{position:static;max-height:none}
+  .filters{display:grid;grid-template-columns:1fr 1fr}
+  .filters input[type=search],.filters #count{grid-column:1/-1;min-width:0}
+  .d-act>*{flex:1 1 auto;justify-content:center}
+  .d-head{flex-wrap:wrap}
+}
+@media (max-width:700px){
+  main{padding:12px}
+  body{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  /* abas viram barra inferior, como em app de celular */
+  .nav nav{position:fixed;left:0;right:0;bottom:0;z-index:20;height:calc(60px + env(safe-area-inset-bottom));padding:0 8px env(safe-area-inset-bottom);background:var(--nav);border-top:1px solid rgba(255,255,255,.08);justify-content:space-around;gap:0;align-items:stretch}
+  .nav nav a{flex:1;height:auto;justify-content:center;border-radius:0;font-size:13px;background:none!important}
+  .nav nav a[aria-current=page]{color:var(--signal);box-shadow:inset 0 3px 0 var(--signal)}
+  .nav-in{justify-content:space-between}
+  .board{display:grid;grid-auto-flow:column;grid-template-columns:none;grid-auto-columns:84%;scroll-snap-type:x mandatory;gap:10px}
+  .board>.col{scroll-snap-align:start}
+  .stats{grid-template-columns:1fr 1fr}
+  #toast{bottom:calc(76px + env(safe-area-inset-bottom));max-width:calc(100% - 24px)}
+}
+@media (pointer:coarse){.btn,input,select,.tabs button{min-height:44px}}

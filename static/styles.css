@@ -986,3 +986,88 @@ input:hover, select:hover, textarea:hover {
   gap: 10px;
   font-size: 13px;
 }
+
+/* ---------- Menu "Mais" no Detalhe e Próxima Ação no Painel ---------- */
+.more-menu {
+  position: relative;
+}
+
+.more-menu > summary {
+  list-style: none;
+  user-select: none;
+}
+
+.more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r, 10px);
+  box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.18));
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  z-index: 25;
+}
+
+.more-pop .btn,
+.more-pop a.btn {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  font-weight: 500;
+  min-height: 32px;
+}
+
+.more-pop select {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.next-job-preview {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0 12px;
+  display: grid;
+  gap: 2px;
+}
+
+.next-job-preview strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-list {
+  display: grid;
+  gap: 6px;
+}
+
+.alert-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border-left: 4px solid var(--amber, var(--warn));
+  background: var(--warn-bg);
+  font-size: 13px;
+  display: grid;
+  gap: 3px;
+}
+
+.alert-item.critical {
+  border-left-color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.alert-item.info {
+  border-left-color: var(--brand, var(--accent));
+  background: var(--surface-2);
+}
