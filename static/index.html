@@ -1,264 +1,89 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR" data-theme="light">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Job Hunter RS — Bancada de Triagem e ATS</title>
-  <link rel="stylesheet" href="/static/tokens.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job Hunter</title>
+<script>try{var t=localStorage.getItem('jh-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.dataset.theme=t}catch(e){}</script>
+<!-- Ajuste os caminhos abaixo se o axum servir /static em outro prefixo -->
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app-shell">
-    <!-- BARRA SUPERIOR PERSISTENTE -->
-    <header class="topbar">
-      <div class="brand-group">
-        <span class="brand-mark">JH</span>
-        <span class="brand-title">Job Hunter RS</span>
+<header class="nav"><div class="nav-in">
+  <a class="brand" href="#painel">Job Hunter</a>
+  <nav aria-label="Principal">
+    <a href="#painel" data-nav="painel">Painel</a>
+    <a href="#vagas" data-nav="vagas">Vagas</a>
+    <a href="#funil" data-nav="funil">Funil</a>
+    <a href="#curriculo" data-nav="curriculo">Currículo</a>
+  </nav>
+  <button id="theme" class="btn ghost" type="button">Tema escuro</button>
+</div></header>
+
+<main>
+  <!-- PAINEL: coleta, números do banco e atalhos para o que importa agora -->
+  <section id="v-painel" class="narrow" hidden>
+    <div class="cols">
+      <div class="stack">
+        <form id="f-coleta" class="card">
+          <h2>Coletar vagas</h2>
+          <div class="row" style="margin-top:12px">
+            <label class="grow">Cargo ou competência<input name="query" required placeholder="Operador de Sistemas"></label>
+            <label class="grow">Localidade<input name="location" placeholder="Araraquara"></label>
+          </div>
+          <div class="between row">
+            <div class="row">
+              <label class="chk"><input type="checkbox" name="remote">Apenas remoto</label>
+              <label class="chk"><input type="checkbox" name="enrich" checked>Enriquecer com IA ao coletar</label>
+            </div>
+            <button class="btn primary" type="submit">Coletar vagas</button>
+          </div>
+        </form>
+        <div class="card">
+          <div class="card-h"><h2>Melhores matches</h2><a href="#vagas">Ver todas as vagas</a></div>
+          <ul id="top" class="plain list"></ul>
+        </div>
       </div>
-
-      <form id="collect-form" class="search-toolbar">
-        <input
-          id="collect-query"
-          class="input-control input-query"
-          type="text"
-          placeholder="Cargo ou competência (ex: Operador de Sistemas, Python, Suporte TI)"
-          required
-        />
-        <input
-          id="collect-location"
-          class="input-control input-location"
-          type="text"
-          value="Araraquara"
-          placeholder="Localidade"
-        />
-        <label class="checkbox-label" title="Filtrar apenas vagas remotas na coleta">
-          <input id="collect-remote" type="checkbox" />
-          <span>Apenas remoto</span>
-        </label>
-        <label class="checkbox-label" title="Executar enriquecimento em lote e embeddings logo após coletar">
-          <input id="collect-auto-enrich" type="checkbox" checked />
-          <span>Auto-enriquecer IA</span>
-        </label>
-        <button id="btn-collect" type="submit" class="btn btn-primary">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-            <circle cx="11" cy="11" r="7"></circle>
-            <line x1="20" y1="20" x2="16.2" y2="16.2"></line>
-          </svg>
-          <span>Coletar Vagas</span>
-        </button>
-      </form>
-
-      <div class="toolbar-actions">
-        <button id="btn-enrich-pending" type="button" class="btn" title="Enriquecer vagas com is_enriched = 0 (Atalho: e)">
-          <span>Enriquecer Pendentes</span>
-          <span class="kbd-hint">e</span>
-        </button>
-        <button id="btn-semantic-rank" type="button" class="btn" title="Ordenar todas as vagas por similaridade de cosseno contra o curriculo.md">
-          <span>Ranking Semântico</span>
-        </button>
-        <button id="btn-open-resume" type="button" class="btn" title="Abrir editor de curriculo.md e otimização ATS (Atalho: r)">
-          <span>Currículo &amp; ATS</span>
-          <span class="kbd-hint">r</span>
-        </button>
-        <button id="btn-toggle-view" type="button" class="btn" title="Alternar entre Bancada Tabela+Inspetor e Quadro Kanban (Atalho: v)">
-          <span id="view-toggle-label">Visão: Tabela</span>
-          <span class="kbd-hint">v</span>
-        </button>
-        <button id="btn-toggle-theme" type="button" class="btn" title="Alternar entre Tema Claro e Tema Escuro">
-          <span id="theme-toggle-label">Tema Escuro</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- ÁREA CENTRAL: SIDEBAR + CONTEÚDO -->
-    <div class="workspace">
-      <aside class="sidebar" aria-label="Filtros e Estatísticas">
-        <div class="sidebar-section">
-          <h2 class="section-heading">Banco Local (SQLite)</h2>
-          <div class="stat-grid">
-            <div class="stat-card">
-              <span class="stat-label">Total</span>
-              <span id="stat-total" class="stat-value tnum">0</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Enriquecidas</span>
-              <span id="stat-enriched" class="stat-value tnum">0</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">No Funil</span>
-              <span id="stat-active" class="stat-value tnum">0</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Pendentes</span>
-              <span id="stat-pending" class="stat-value tnum">0</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sidebar-section">
-          <h2 class="section-heading">Busca Rápida na Tabela</h2>
-          <input
-            id="filter-search-input"
-            class="input-control"
-            type="search"
-            placeholder="Filtrar título, empresa, local... (Ctrl+K)"
-          />
-        </div>
-
-        <div class="sidebar-section">
-          <h2 class="section-heading">Modalidade de Trabalho</h2>
-          <div id="filter-work-model-group">
-            <button type="button" class="filter-nav-btn active" data-work-model="Todas">
-              <span>Todas as modalidades</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-work-model="Remoto">
-              <span>Remoto</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-work-model="Hibrido">
-              <span>Híbrido</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-work-model="Presencial">
-              <span>Presencial</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="sidebar-section">
-          <h2 class="section-heading">Escala / Turno</h2>
-          <select id="filter-shift-select" class="select-control">
-            <option value="">Todas as escalas</option>
-            <option value="Comercial">Comercial (5x2)</option>
-            <option value="6x2">Escala 6x2</option>
-            <option value="12x36">Escala 12x36</option>
-            <option value="Turno">Turnos Rotativos / Noturno</option>
-          </select>
-        </div>
-
-        <div class="sidebar-section">
-          <h2 class="section-heading">Estágio no Funil (Kanban)</h2>
-          <div id="filter-status-group">
-            <button type="button" class="filter-nav-btn active" data-status="">
-              <span>Todos os estágios</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-status="Descoberta">
-              <span>Descoberta</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-status="Salva">
-              <span>Salva</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-status="Aplicada">
-              <span>Aplicada</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-status="Entrevista">
-              <span>Entrevista</span>
-            </button>
-            <button type="button" class="filter-nav-btn" data-status="Descartada">
-              <span>Descartada</span>
-            </button>
-          </div>
-        </div>
+      <aside class="stack">
+        <div class="card"><h2 style="margin-bottom:12px">Seu banco de vagas</h2><dl id="stats" class="stats"></dl></div>
+        <div class="card" id="pend"></div>
       </aside>
-
-      <!-- VISÃO 1: BANCADA MASTER-DETAIL (TABELA + INSPETOR) -->
-      <main id="view-split" class="content-split">
-        <section class="pane-table-container" aria-label="Lista de Vagas">
-          <div class="pane-header">
-            <h2 id="table-header-title" class="pane-title">Vagas Registradas (0)</h2>
-            <span id="ranking-indicator" class="badge hidden">Ordenado por Similaridade Semântica</span>
-          </div>
-
-          <div class="table-scroll">
-            <table class="jobs-table">
-              <thead>
-                <tr>
-                  <th style="width: 48px;" class="col-num">ID</th>
-                  <th style="width: 68px;" class="col-num">Match</th>
-                  <th style="width: 34%;">Cargo</th>
-                  <th style="width: 22%;">Empresa</th>
-                  <th style="width: 96px;">Modalidade</th>
-                  <th style="width: 110px;">Escala / Turno</th>
-                  <th style="width: 96px;">Status</th>
-                </tr>
-              </thead>
-              <tbody id="jobs-tbody"></tbody>
-            </table>
-            <div id="table-empty-state" class="state-box hidden" style="margin: 16px;">
-              <strong>Nenhuma vaga encontrada para os filtros selecionados.</strong>
-              <span>Altere os critérios na barra lateral ou execute uma nova coleta na barra superior.</span>
-              <button id="btn-reset-filters" type="button" class="btn">Limpar filtros ativos</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="pane-inspector" aria-label="Inspetor de Vaga e Análise ATS">
-          <div class="pane-header">
-            <h2 class="pane-title">Inspetor de Vaga &amp; Compatibilidade ATS</h2>
-            <div id="inspector-actions" class="toolbar-actions hidden">
-              <select id="inspector-status-select" class="select-control" title="Alterar estágio no Kanban (Atalho: s)">
-                <option value="Descoberta">Descoberta</option>
-                <option value="Salva">Salva</option>
-                <option value="Aplicada">Aplicada</option>
-                <option value="Entrevista">Entrevista</option>
-                <option value="Descartada">Descartada</option>
-              </select>
-              <button id="btn-run-match" type="button" class="btn btn-primary" title="Executar análise profunda de Match Score e ATS (Atalho: m)">
-                <span>Calcular Match ATS</span>
-                <span class="kbd-hint" style="color: inherit; background: rgba(255,255,255,0.18); border: none;">m</span>
-              </button>
-              <a id="inspector-external-link" href="#" target="_blank" rel="noopener noreferrer" class="btn">
-                <span>Abrir Vaga</span>
-              </a>
-            </div>
-          </div>
-
-          <div id="inspector-content" class="inspector-scroll">
-            <div class="state-box">
-              <strong>Nenhuma vaga selecionada.</strong>
-              <span>Selecione uma linha na tabela à esquerda (ou use as teclas j / k) para inspecionar requisitos, escala de trabalho, alertas e relatório ATS.</span>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <!-- VISÃO 2: QUADRO KANBAN (5 COLUNAS) -->
-      <main id="view-kanban" class="kanban-board hidden" aria-label="Quadro Kanban de Candidaturas"></main>
     </div>
+  </section>
 
-    <!-- BARRA DE STATUS INFERIOR -->
-    <footer class="statusbar">
-      <div class="statusbar-left">
-        <span id="status-message">Pronto.</span>
-      </div>
-      <div class="statusbar-right">
-        <span><span class="kbd-hint">j/k</span> Navegar</span>
-        <span><span class="kbd-hint">m</span> Match ATS</span>
-        <span><span class="kbd-hint">s</span> Mudar Status</span>
-        <span><span class="kbd-hint">e</span> Enriquecer</span>
-        <span><span class="kbd-hint">r</span> Currículo</span>
-        <span><span class="kbd-hint">v</span> Alternar Visão</span>
-      </div>
-    </footer>
-  </div>
-
-  <!-- MODAL / GAVETA DE EDIÇÃO DE CURRÍCULO (curriculo.md) & ATS -->
-  <div id="resume-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="resume-modal-title">
-    <div class="modal-panel">
-      <div class="pane-header">
-        <h2 id="resume-modal-title" class="pane-title">Editor de Currículo Base (curriculo.md) &amp; Otimização ATS</h2>
-        <div class="toolbar-actions">
-          <button id="btn-save-resume" type="button" class="btn btn-primary">Salvar curriculo.md</button>
-          <button id="btn-save-and-rematch" type="button" class="btn">Salvar e Recalcular Match da Vaga Atual</button>
-          <button id="btn-close-resume" type="button" class="btn">Fechar (Esc)</button>
-        </div>
-      </div>
-      <div class="modal-body">
-        <span style="font-size: 12px; color: var(--text-secondary);">
-          Edite diretamente o arquivo <code>curriculo.md</code> utilizado pelo motor de embeddings e pela análise de compatibilidade ATS. Clique em qualquer competência ausente no Inspetor da vaga para adicioná-la automaticamente.
-        </span>
-        <textarea id="resume-editor-textarea" class="resume-textarea" spellcheck="false"></textarea>
-      </div>
+  <!-- VAGAS: busca e filtros no topo, lista à esquerda, detalhe à direita -->
+  <section id="v-vagas" hidden>
+    <div class="filters">
+      <input type="search" data-f="q" placeholder="Buscar por cargo, empresa ou competência" aria-label="Buscar vagas">
+      <select data-f="modo" aria-label="Modalidade"><option value="">Modalidade</option><option value="remoto">Remoto</option><option value="hibrido">Híbrido</option><option value="presencial">Presencial</option></select>
+      <select data-f="turno" id="f-turno" aria-label="Escala"><option value="">Escala</option></select>
+      <select data-f="etapa" id="f-etapa" aria-label="Etapa"><option value="">Etapa</option></select>
+      <span id="count" class="mut"></span>
     </div>
-  </div>
+    <div class="split">
+      <div class="card list scroll"><ul id="list" class="plain"></ul></div>
+      <article id="detail" class="card scroll"></article>
+    </div>
+    <p class="mut" style="margin-top:12px">Atalhos: j e k navegam, m calcula o match, s avança a etapa, / busca.</p>
+  </section>
 
-  <script src="/static/app.js"></script>
+  <!-- FUNIL: acompanhamento por etapa -->
+  <section id="v-funil" hidden>
+    <div class="page-h"><div><h1 style="font-size:20px">Funil de candidaturas</h1><p>Mova as vagas entre etapas conforme avança.</p></div></div>
+    <div id="board" class="board"></div>
+  </section>
+
+  <!-- CURRÍCULO: edição do curriculo.md -->
+  <section id="v-curriculo" class="narrow" hidden>
+    <div class="page-h">
+      <div><h1 style="font-size:20px">Currículo</h1><p>O match e a análise ATS usam este texto em Markdown.</p></div>
+      <button id="save-cv" class="btn primary" type="button">Salvar currículo</button>
+    </div>
+    <textarea id="cv" class="editor" spellcheck="false" aria-label="Conteúdo do curriculo.md"></textarea>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
 </body>
 </html>

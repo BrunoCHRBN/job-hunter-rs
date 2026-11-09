@@ -3,10 +3,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -19,7 +20,7 @@ use crate::gemini::GeminiClient;
 use crate::models::JobFilter;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
-const TOKENS_CSS: &str = include_str!("../static/tokens.css");
+const STYLES_CSS: &str = include_str!("../static/styles.css");
 const APP_JS: &str = include_str!("../static/app.js");
 
 #[derive(Clone)]
@@ -38,20 +39,22 @@ pub struct JobsQueryParams {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SearchPayload {
+pub struct CollectPayload {
     pub query: String,
     pub location: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default)]
     pub remote: bool,
+    #[serde(default)]
+    pub enrich: bool,
 }
 
 fn default_limit() -> usize {
-    15
+    20
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct EnrichPayload {
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
@@ -76,20 +79,27 @@ pub async fn run_web_server(cfg: AppConfig, db: Database, port: u16) -> Result<(
 
     let app = Router::new()
         .route("/", get(serve_index))
-        .route("/static/tokens.css", get(serve_css))
+        .route("/index.html", get(serve_index))
+        .route("/styles.css", get(serve_css))
+        .route("/static/styles.css", get(serve_css))
+        .route("/app.js", get(serve_js))
         .route("/static/app.js", get(serve_js))
         .route("/api/stats", get(api_stats))
         .route("/api/jobs", get(api_list_jobs))
-        .route("/api/search", post(api_search))
+        .route("/api/collect", post(api_collect))
+        .route("/api/search", post(api_collect))
         .route("/api/enrich", post(api_enrich))
         .route("/api/rank", post(api_rank))
         .route("/api/jobs/:id/match", post(api_job_match))
-        .route("/api/jobs/:id/status", patch(api_update_status))
+        .route(
+            "/api/jobs/:id/status",
+            post(api_update_status).patch(api_update_status),
+        )
         .route("/api/resume", get(api_get_resume).put(api_put_resume))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    info!("🌐 Servidor Web Anti-Slop iniciado em http://{}", addr);
+    info!("🌐 Servidor Web iniciado em http://{}", addr);
     println!("🌐 Bancada Web Job Hunter RS ativa em: http://localhost:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -110,7 +120,7 @@ async fn serve_index() -> Html<&'static str> {
 async fn serve_css() -> Response {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        TOKENS_CSS,
+        STYLES_CSS,
     )
         .into_response()
 }
@@ -158,42 +168,15 @@ async fn api_list_jobs(
     Ok(Json(serde_json::to_value(jobs).map_err(internal_err)?))
 }
 
-async fn api_search(
-    State(state): State<Arc<WebState>>,
-    Json(payload): Json<SearchPayload>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let report = collectors::collect_all(
-        &state.cfg,
-        &state.db,
-        &payload.query,
-        payload.location.as_deref(),
-        payload.limit,
-        payload.remote,
-    )
-    .await
-    .map_err(internal_err)?;
+async fn run_enrichment_batches(state: &WebState, batch_size: usize) -> Result<usize> {
+    let api_key = state.cfg.require_gemini_key()?;
+    let gemini = GeminiClient::new(api_key)?;
+    let effective_batch = batch_size.clamp(1, 10);
 
-    Ok(Json(json!({
-        "gupy_count": report.gupy_count,
-        "jobspy_count": report.jobspy_count,
-        "total_fetched": report.total_fetched,
-        "newly_inserted": report.newly_inserted,
-        "duplicates_skipped": report.duplicates_skipped,
-    })))
-}
-
-async fn api_enrich(
-    State(state): State<Arc<WebState>>,
-    Json(payload): Json<EnrichPayload>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let api_key = state.cfg.require_gemini_key().map_err(internal_err)?;
-    let gemini = GeminiClient::new(api_key).map_err(internal_err)?;
-    let batch_size = payload.batch_size.clamp(1, 10);
-
-    let unenriched = state.db.get_unenriched_jobs(50).await.map_err(internal_err)?;
+    let unenriched = state.db.get_unenriched_jobs(50).await?;
     let mut enriched_count = 0usize;
 
-    for chunk in unenriched.chunks(batch_size) {
+    for chunk in unenriched.chunks(effective_batch) {
         let raw_batch: Vec<_> = chunk.iter().map(|j| j.to_raw_listing()).collect();
         let extracted_list = match gemini.extract_jobs_batch(&raw_batch).await {
             Ok(list) => list,
@@ -224,11 +207,62 @@ async fn api_enrich(
             state
                 .db
                 .update_job_enrichment(job_record.id, meta, embedding_opt.as_deref())
-                .await
-                .map_err(internal_err)?;
+                .await?;
             enriched_count += 1;
         }
     }
+
+    Ok(enriched_count)
+}
+
+async fn api_collect(
+    State(state): State<Arc<WebState>>,
+    Json(payload): Json<CollectPayload>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let report = collectors::collect_all(
+        &state.cfg,
+        &state.db,
+        &payload.query,
+        payload.location.as_deref(),
+        payload.limit,
+        payload.remote,
+    )
+    .await
+    .map_err(internal_err)?;
+
+    let mut enriched_count = 0usize;
+    if payload.enrich && report.newly_inserted > 0 {
+        enriched_count = run_enrichment_batches(&state, 5)
+            .await
+            .unwrap_or_else(|err| {
+                warn!("Aviso no auto-enriquecimento após coleta: {}", err);
+                0
+            });
+    }
+
+    Ok(Json(json!({
+        "gupy_count": report.gupy_count,
+        "jobspy_count": report.jobspy_count,
+        "total_fetched": report.total_fetched,
+        "newly_inserted": report.newly_inserted,
+        "duplicates_skipped": report.duplicates_skipped,
+        "enriched_count": enriched_count,
+    })))
+}
+
+async fn api_enrich(
+    State(state): State<Arc<WebState>>,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let payload: EnrichPayload = if body.is_empty() {
+        EnrichPayload { batch_size: 5 }
+    } else {
+        serde_json::from_slice(&body).unwrap_or(EnrichPayload { batch_size: 5 })
+    };
+
+    let enriched_count = run_enrichment_batches(&state, payload.batch_size)
+        .await
+        .map_err(internal_err)?;
 
     Ok(Json(json!({ "enriched_count": enriched_count })))
 }
