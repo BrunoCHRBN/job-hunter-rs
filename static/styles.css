@@ -856,3 +856,133 @@ input:hover, select:hover, textarea:hover {
     transition: background-color 0.12s;
   }
 }
+
+/* ---------- Dossiê v2 (Proveniência, Veredito, Eixos, Lacunas e Omissões) ---------- */
+.dossier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.prov-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.prov-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.prov-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.prov-badge.explicit {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border-color: transparent;
+}
+
+.prov-badge.inferred {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: transparent;
+}
+
+.prov-badge.absent {
+  background: var(--surface);
+  color: var(--text-3);
+}
+
+.prov-val {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.prov-quote {
+  font-size: 11px;
+  color: var(--text-2);
+  font-style: italic;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 6px;
+}
+
+.missing-bar {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.verdict-banner {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.verdict-banner.apply {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.verdict-banner.maybe {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.verdict-banner.skip {
+  background: var(--bad-bg);
+  border-color: var(--bad);
+}
+
+.axes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.axis-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.gap-list {
+  display: grid;
+  gap: 6px;
+}
+
+.gap-item {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}

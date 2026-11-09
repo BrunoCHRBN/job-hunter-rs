@@ -110,6 +110,7 @@ impl GeminiClient {
             ],
             "generationConfig": {
                 "temperature": 0.1,
+                "maxOutputTokens": 8192,
                 "responseMimeType": "application/json"
             }
         });

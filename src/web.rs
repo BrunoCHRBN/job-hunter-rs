@@ -17,7 +17,7 @@ use crate::collectors;
 use crate::config::AppConfig;
 use crate::db::Database;
 use crate::gemini::GeminiClient;
-use crate::models::JobFilter;
+use crate::models::{JobFilter, JobRecord};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const STYLES_CSS: &str = include_str!("../static/styles.css");
@@ -151,6 +151,39 @@ async fn api_stats(
     })))
 }
 
+fn serialize_job(job: &JobRecord) -> serde_json::Value {
+    let mut val = serde_json::to_value(job).unwrap_or_else(|_| json!({}));
+    let dossier = job.dossier();
+    let fit = job.fit();
+    let missing = dossier
+        .as_ref()
+        .map(|d| d.missing())
+        .unwrap_or_default();
+    let verdict_kind = fit.as_ref().map(|f| f.verdict_kind());
+
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert(
+            "dossier".to_string(),
+            serde_json::to_value(&dossier).unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert(
+            "fit".to_string(),
+            serde_json::to_value(&fit).unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert(
+            "verdict_kind".to_string(),
+            verdict_kind
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert(
+            "missing".to_string(),
+            serde_json::to_value(&missing).unwrap_or_else(|_| json!([])),
+        );
+    }
+    val
+}
+
 async fn api_list_jobs(
     State(state): State<Arc<WebState>>,
     Query(params): Query<JobsQueryParams>,
@@ -165,7 +198,8 @@ async fn api_list_jobs(
     };
 
     let jobs = state.db.list_jobs(&filter).await.map_err(internal_err)?;
-    Ok(Json(serde_json::to_value(jobs).map_err(internal_err)?))
+    let payload: Vec<serde_json::Value> = jobs.iter().map(serialize_job).collect();
+    Ok(Json(serde_json::Value::Array(payload)))
 }
 
 /// Processa até 1 lote (padrão 5 vagas) por requisição para responder rápido (< 5s)
@@ -173,7 +207,7 @@ async fn api_list_jobs(
 async fn run_single_enrichment_batch(state: &WebState, batch_size: usize) -> Result<(usize, usize)> {
     let api_key = state.cfg.require_gemini_key()?;
     let gemini = GeminiClient::new(api_key)?;
-    let effective_batch = batch_size.clamp(1, 10);
+    let effective_batch = batch_size.clamp(1, 5);
 
     let unenriched = state
         .db
@@ -205,16 +239,20 @@ async fn run_single_enrichment_batch(state: &WebState, batch_size: usize) -> Res
             .find(|m| m.external_id == expected_ext_id)
             .or_else(|| extracted_list.get(idx));
 
-        let Some(meta) = maybe_meta else {
+        let Some(raw_meta) = maybe_meta else {
             continue;
         };
 
-        let embedding_text = job_record.build_embedding_text(meta);
+        let mut meta = raw_meta.clone();
+        meta.dossier
+            .verify_evidence(job_record.raw_description.as_deref().unwrap_or(""));
+
+        let embedding_text = job_record.build_embedding_text(&meta);
         let embedding_opt = gemini.generate_embedding(&embedding_text).await.ok();
 
         state
             .db
-            .update_job_enrichment(job_record.id, meta, embedding_opt.as_deref())
+            .update_job_enrichment(job_record.id, &meta, embedding_opt.as_deref())
             .await?;
         enriched_count += 1;
     }
@@ -319,15 +357,26 @@ async fn api_job_match(
         .await
         .map_err(internal_err)?;
 
+    let verdict_kind = analysis.verdict_kind();
     state
         .db
         .update_job_match(job.id, &analysis)
         .await
         .map_err(internal_err)?;
 
+    let updated_job = state
+        .db
+        .get_job_by_id(job.id)
+        .await
+        .map_err(internal_err)?
+        .map(|j| serialize_job(&j));
+
     Ok(Json(json!({
         "job_id": job.id,
+        "verdict_kind": verdict_kind,
         "analysis": analysis,
+        "fit": analysis,
+        "job": updated_job,
     })))
 }
 

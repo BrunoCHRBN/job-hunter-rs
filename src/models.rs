@@ -15,7 +15,7 @@ pub struct RawJobListing {
     pub published_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ExtractedJobMetadata {
     pub external_id: String,
     #[serde(default = "default_nao_informado")]
@@ -34,6 +34,8 @@ pub struct ExtractedJobMetadata {
     pub summary: String,
     #[serde(default)]
     pub red_flags: Vec<String>,
+    #[serde(default)]
+    pub dossier: Dossier,
 }
 
 fn default_nao_informado() -> String {
@@ -45,7 +47,7 @@ pub struct BatchExtractionResponse {
     pub jobs: Vec<ExtractedJobMetadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct MatchAnalysisResult {
     pub match_score: f32,
     #[serde(default)]
@@ -58,6 +60,15 @@ pub struct MatchAnalysisResult {
     pub shift_and_location_verdict: String,
     #[serde(default)]
     pub detailed_analysis_markdown: String,
+    /// "apply" | "maybe" | "skip" (use `verdict_kind()` para o valor final)
+    #[serde(default)]
+    pub verdict: String,
+    #[serde(default)]
+    pub verdict_reasons: Vec<String>,
+    #[serde(default)]
+    pub axes: FitAxes,
+    #[serde(default)]
+    pub gaps: Vec<GapAction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -86,6 +97,8 @@ pub struct JobRecord {
     pub match_analysis_md: Option<String>,
     pub published_at: Option<String>,
     pub created_at: Option<String>,
+    pub dossier_json: Option<String>,
+    pub fit_json: Option<String>,
 }
 
 impl JobRecord {
@@ -180,4 +193,239 @@ pub struct DbStats {
     pub total_jobs: i64,
     pub enriched_jobs: i64,
     pub saved_or_applied_jobs: i64,
+}
+
+// ======================================================================
+// Dossiê v2: origem dos dados, alertas com gravidade e encaixe por eixo.
+// Tudo é String + helpers de normalização de propósito: se a IA devolver
+// um valor fora do vocabulário, o lote inteiro NÃO falha no parse.
+// ======================================================================
+
+/// De onde veio um dado extraído da vaga.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FieldSource {
+    /// "explicit" | "inferred" | "absent"
+    #[serde(default)]
+    pub origin: String,
+    /// Trecho literal da descrição (até 12 palavras). Só vale com origin = "explicit".
+    #[serde(default)]
+    pub evidence: Option<String>,
+}
+
+impl FieldSource {
+    /// Origem normalizada. "explicit" sem trecho é rebaixado para "inferred".
+    pub fn kind(&self) -> &'static str {
+        let has_quote = self.evidence.as_deref().map_or(false, |e| !e.trim().is_empty());
+        match self.origin.trim().to_lowercase().as_str() {
+            "explicit" if has_quote => "explicit",
+            "explicit" | "inferred" => "inferred",
+            _ => "absent",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Provenance {
+    #[serde(default)]
+    pub work_model: FieldSource,
+    #[serde(default)]
+    pub contract_type: FieldSource,
+    #[serde(default)]
+    pub seniority: FieldSource,
+    #[serde(default)]
+    pub shift_schedule: FieldSource,
+    #[serde(default)]
+    pub salary: FieldSource,
+}
+
+/// Descrição reorganizada, fiel ao texto original.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Sections {
+    #[serde(default)]
+    pub responsibilities: Vec<String>,
+    #[serde(default)]
+    pub required: Vec<String>,
+    #[serde(default)]
+    pub nice_to_have: Vec<String>,
+    #[serde(default)]
+    pub benefits: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Alert {
+    /// "critical" | "warning" | "info"
+    #[serde(default)]
+    pub severity: String,
+    #[serde(default)]
+    pub text: String,
+    /// Trecho literal que sustenta o alerta, quando houver.
+    #[serde(default)]
+    pub evidence: Option<String>,
+}
+
+impl Alert {
+    pub fn level(&self) -> &'static str {
+        match self.severity.trim().to_lowercase().as_str() {
+            "critical" => "critical",
+            "info" => "info",
+            _ => "warning",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Dossier {
+    #[serde(default)]
+    pub provenance: Provenance,
+    #[serde(default)]
+    pub sections: Sections,
+    #[serde(default)]
+    pub alerts: Vec<Alert>,
+}
+
+fn squash(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+impl Dossier {
+    /// Descarta qualquer trecho que NÃO exista de fato na descrição original.
+    /// Dados "explicit" sem trecho verificável passam a valer como "inferred".
+    pub fn verify_evidence(&mut self, raw_description: &str) {
+        let hay = squash(raw_description);
+        let check = |src: &mut FieldSource| {
+            if let Some(q) = &src.evidence {
+                if q.trim().is_empty() || !hay.contains(&squash(q)) {
+                    src.evidence = None;
+                }
+            }
+            src.origin = src.kind().to_string();
+        };
+        let p = &mut self.provenance;
+        check(&mut p.work_model);
+        check(&mut p.contract_type);
+        check(&mut p.seniority);
+        check(&mut p.shift_schedule);
+        check(&mut p.salary);
+        for a in &mut self.alerts {
+            if let Some(q) = &a.evidence {
+                if q.trim().is_empty() || !hay.contains(&squash(q)) {
+                    a.evidence = None;
+                }
+            }
+            a.severity = a.level().to_string();
+        }
+    }
+
+    /// O que o texto da vaga não informa (para o bloco "O que o texto não diz").
+    pub fn missing(&self) -> Vec<&'static str> {
+        let p = &self.provenance;
+        let mut m = Vec::new();
+        if p.salary.kind() == "absent" {
+            m.push("salario");
+        }
+        if p.shift_schedule.kind() == "absent" {
+            m.push("escala");
+        }
+        if p.work_model.kind() == "absent" {
+            m.push("modalidade");
+        }
+        if p.contract_type.kind() == "absent" {
+            m.push("contrato");
+        }
+        if self.sections.benefits.is_empty() {
+            m.push("beneficios");
+        }
+        m
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FitAxis {
+    /// "strong" | "partial" | "weak" | "unknown"
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+impl FitAxis {
+    pub fn kind(&self) -> &'static str {
+        match self.level.trim().to_lowercase().as_str() {
+            "strong" => "strong",
+            "partial" => "partial",
+            "weak" => "weak",
+            _ => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FitAxes {
+    #[serde(default)]
+    pub skills: FitAxis,
+    #[serde(default)]
+    pub logistics: FitAxis,
+    #[serde(default)]
+    pub seniority: FitAxis,
+    #[serde(default)]
+    pub salary: FitAxis,
+}
+
+/// Uma lacuna do currículo e o que fazer com ela.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GapAction {
+    #[serde(default)]
+    pub skill: String,
+    /// "has_unlisted" (há indício no currículo) | "study" | "ignore"
+    #[serde(default)]
+    pub suggested: String,
+    #[serde(default)]
+    pub why: String,
+}
+
+impl MatchAnalysisResult {
+    /// "apply" | "maybe" | "skip". Vale o mais conservador entre a IA e a nota,
+    /// e nunca "apply" com logística fraca.
+    pub fn verdict_kind(&self) -> &'static str {
+        let by_score = if self.match_score >= 70.0 {
+            "apply"
+        } else if self.match_score >= 45.0 {
+            "maybe"
+        } else {
+            "skip"
+        };
+        let ai = match self.verdict.trim().to_lowercase().as_str() {
+            "apply" => "apply",
+            "maybe" => "maybe",
+            "skip" => "skip",
+            _ => by_score,
+        };
+        let rank = |v: &str| -> u8 {
+            match v {
+                "apply" => 2,
+                "maybe" => 1,
+                _ => 0,
+            }
+        };
+        let mut v = if rank(ai) < rank(by_score) { ai } else { by_score };
+        if v == "apply" && self.axes.logistics.kind() == "weak" {
+            v = "maybe";
+        }
+        v
+    }
+}
+
+impl JobRecord {
+    /// None quando a vaga foi enriquecida antes do dossiê v2.
+    pub fn dossier(&self) -> Option<Dossier> {
+        self.dossier_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Dossier>(s).ok())
+    }
+
+    pub fn fit(&self) -> Option<MatchAnalysisResult> {
+        self.fit_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<MatchAnalysisResult>(s).ok())
+    }
 }

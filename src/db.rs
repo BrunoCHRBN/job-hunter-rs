@@ -9,6 +9,7 @@ use crate::models::{
 };
 
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
+const MIGRATION_002: &str = include_str!("../migrations/002_dossie.sql");
 
 /// Gera o hash blake3 determinístico para deduplicação de vagas:
 /// `format!("{}|{}|{}", company.trim().to_lowercase(), title.trim().to_lowercase(), location.trim().to_lowercase())`
@@ -74,6 +75,23 @@ impl Database {
             .execute(&pool)
             .await
             .context("Falha ao aplicar migration inicial (001_init.sql)")?;
+
+        let existing_cols: Vec<String> = sqlx::query("PRAGMA table_info(jobs)")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect();
+
+        if !existing_cols.iter().any(|c| c == "dossier_json")
+            || !existing_cols.iter().any(|c| c == "fit_json")
+        {
+            sqlx::raw_sql(MIGRATION_002)
+                .execute(&pool)
+                .await
+                .context("Falha ao aplicar migration (002_dossie.sql)")?;
+        }
 
         Ok(Self { pool })
     }
@@ -156,6 +174,7 @@ impl Database {
             .unwrap_or_else(|_| "[]".to_string());
         let embedding_json = embedding
             .and_then(|vec| serde_json::to_string(vec).ok());
+        let dossier_json = serde_json::to_string(&meta.dossier).ok();
 
         sqlx::query(
             r#"
@@ -169,8 +188,9 @@ impl Database {
                 required_skills_json = ?6,
                 red_flags_json = ?7,
                 ai_summary = ?8,
-                embedding_json = ?9
-            WHERE id = ?10
+                embedding_json = ?9,
+                dossier_json = ?10
+            WHERE id = ?11
             "#,
         )
         .bind(&meta.work_model)
@@ -182,6 +202,7 @@ impl Database {
         .bind(&red_flags_json)
         .bind(&meta.summary)
         .bind(&embedding_json)
+        .bind(&dossier_json)
         .bind(job_id)
         .execute(&self.pool)
         .await
@@ -231,16 +252,20 @@ impl Database {
             analysis.detailed_analysis_markdown
         );
 
+        let fit_json = serde_json::to_string(analysis).ok();
+
         sqlx::query(
             r#"
             UPDATE jobs
             SET match_score = ?1,
-                match_analysis_md = ?2
-            WHERE id = ?3
+                match_analysis_md = ?2,
+                fit_json = ?3
+            WHERE id = ?4
             "#,
         )
         .bind(analysis.match_score as f64)
         .bind(&formatted_md)
+        .bind(&fit_json)
         .bind(job_id)
         .execute(&self.pool)
         .await

@@ -181,7 +181,7 @@ async fn cmd_search(
 async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result<usize> {
     let api_key = cfg.require_gemini_key()?;
     let gemini = GeminiClient::new(api_key)?;
-    let effective_batch = batch_size.clamp(1, 10);
+    let effective_batch = batch_size.clamp(1, 5);
 
     let unenriched = db.get_unenriched_jobs(100).await?;
     if unenriched.is_empty() {
@@ -219,7 +219,7 @@ async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result
                 .find(|m| m.external_id == expected_ext_id)
                 .or_else(|| extracted_list.get(idx));
 
-            let Some(meta) = maybe_meta else {
+            let Some(raw_meta) = maybe_meta else {
                 warn!(
                     "Metadados não retornados pelo modelo para a vaga ID {} ({})",
                     job_record.id,
@@ -228,7 +228,11 @@ async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result
                 continue;
             };
 
-            let embedding_text = job_record.build_embedding_text(meta);
+            let mut meta = raw_meta.clone();
+            meta.dossier
+                .verify_evidence(job_record.raw_description.as_deref().unwrap_or(""));
+
+            let embedding_text = job_record.build_embedding_text(&meta);
             let embedding_opt = match gemini.generate_embedding(&embedding_text).await {
                 Ok(vec) => Some(vec),
                 Err(err) => {
@@ -240,7 +244,7 @@ async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result
                 }
             };
 
-            db.update_job_enrichment(job_record.id, meta, embedding_opt.as_deref())
+            db.update_job_enrichment(job_record.id, &meta, embedding_opt.as_deref())
                 .await?;
             total_enriched += 1;
 

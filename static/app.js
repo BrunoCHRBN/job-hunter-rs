@@ -139,8 +139,9 @@ function parseMatchMd(md) {
 }
 
 function norm(j) {
-  let a = j.analysis || j.match_analysis || parseMatchMd(j.match_analysis_md) || {};
+  let a = j.fit || j.analysis || j.match_analysis || parse(j.fit_json) || parseMatchMd(j.match_analysis_md) || {};
   if (typeof a === 'string') a = parse(a) || parseMatchMd(a) || {};
+  const dossier = j.dossier || parse(j.dossier_json) || null;
   const pick = (k) => j[k] ?? a[k];
   const modo = cleanVal(j.work_model);
   const turno = cleanVal(j.shift_schedule);
@@ -148,6 +149,8 @@ function norm(j) {
   const nivel = cleanVal(j.seniority);
   const salario = cleanVal(j.salary_estimate_brl);
   const resumo = cleanVal(j.summary || j.ai_summary);
+  const missing = Array.isArray(j.missing) ? j.missing : [];
+  const verdictKind = j.verdict_kind || a.verdict || null;
   return {
     id: j.id,
     title: cleanVal(j.title) || 'Sem título',
@@ -167,12 +170,19 @@ function norm(j) {
     etapa: stage(j.status || j.application_status),
     score: j.match_score != null ? Math.round(j.match_score) : null,
     enriched: Boolean(j.is_enriched ?? j.enriched ?? resumo),
+    dossier,
+    fit: a && Object.keys(a).length ? a : null,
+    verdictKind,
+    missing,
     an: {
       ok: arr(pick('matching_skills')),
       falta: arr(pick('missing_skills')),
       ats: arr(pick('ats_suggestions')),
       veredito: cleanVal(pick('shift_and_location_verdict')),
       md: cleanVal(pick('detailed_analysis_markdown')),
+      verdictReasons: Array.isArray(a.verdict_reasons) ? a.verdict_reasons : [],
+      axes: a.axes || null,
+      gaps: Array.isArray(a.gaps) ? a.gaps : [],
     },
   };
 }
@@ -350,6 +360,144 @@ function primaryStageAction(j) {
   return null;
 }
 
+function renderProvenanceSheet(j) {
+  if (!j.dossier || !j.dossier.provenance) return '';
+  const p = j.dossier.provenance;
+  const ORIGIN_LABEL = { explicit: 'Explícito', inferred: 'Inferido', absent: 'Não dito' };
+  const fields = [
+    ['Modalidade', j.modo || 'Não informado', p.work_model],
+    ['Escala / Turno', j.turno || 'Não informado', p.shift_schedule],
+    ['Contrato', j.contrato || 'Não informado', p.contract_type],
+    ['Senioridade', j.nivel || 'Não informado', p.seniority],
+    ['Salário', j.salario || 'Não informado', p.salary],
+  ];
+  return `<div>
+    <h3>Ficha da vaga e origem dos dados</h3>
+    <div class="dossier-grid">
+      ${fields
+        .map(([label, val, src]) => {
+          const orig = (src && src.origin) || 'absent';
+          const quote = src && src.evidence ? cleanVal(src.evidence) : '';
+          return `<div class="prov-card">
+            <div class="prov-head">
+              <span>${esc(label)}</span>
+              <span class="prov-badge ${esc(orig)}">${esc(ORIGIN_LABEL[orig] || orig)}</span>
+            </div>
+            <div class="prov-val">${esc(val)}</div>
+            ${quote ? `<div class="prov-quote">“${esc(quote)}”</div>` : ''}
+          </div>`;
+        })
+        .join('')}
+    </div>
+  </div>`;
+}
+
+function renderMissingBlock(j) {
+  if (!j.missing || !j.missing.length) return '';
+  const LABELS = {
+    salario: 'Salário / faixa salarial',
+    escala: 'Escala / horário de trabalho',
+    modalidade: 'Modalidade (Presencial/Remoto)',
+    contrato: 'Regime de contratação (CLT/PJ)',
+    beneficios: 'Pacote de benefícios',
+  };
+  return `<div class="missing-bar">
+    <strong>O que o texto não diz:</strong>
+    ${j.missing.map((k) => `<span class="chip">${esc(LABELS[k] || k)}</span>`).join('')}
+  </div>`;
+}
+
+function renderVerdictBanner(j) {
+  if (!j.verdictKind && !j.an.verdictReasons.length) return '';
+  const vk = j.verdictKind || 'maybe';
+  const V_LABELS = {
+    apply: 'Vale candidatar-se (Apply)',
+    maybe: 'Avaliar com cautela (Maybe)',
+    skip: 'Melhor pular (Skip)',
+  };
+  return `<div class="verdict-banner ${esc(vk)}">
+    <strong>Veredito: ${esc(V_LABELS[vk] || vk)}</strong>
+    ${j.an.verdictReasons.length ? ul(j.an.verdictReasons) : ''}
+  </div>`;
+}
+
+function renderFitAxes(j) {
+  const axes = j.an.axes;
+  if (!axes) return '';
+  const LEVEL_BADGE = {
+    strong: ['ok', 'Forte'],
+    partial: ['mid', 'Parcial'],
+    weak: ['lo', 'Fraco'],
+    unknown: ['', 'Indefinido'],
+  };
+  const items = [
+    ['Competências', axes.skills],
+    ['Logística e Escala', axes.logistics],
+    ['Senioridade', axes.seniority],
+    ['Salário', axes.salary],
+  ];
+  return `<div>
+    <h3>Encaixe por eixo</h3>
+    <div class="axes-grid">
+      ${items
+        .map(([label, ax]) => {
+          if (!ax) return '';
+          const [clsName, tag] = LEVEL_BADGE[ax.level] || ['', ax.level || 'N/D'];
+          return `<div class="axis-card">
+            <div class="prov-head">
+              <strong>${esc(label)}</strong>
+              <span class="chip ${clsName}">${esc(tag)}</span>
+            </div>
+            <p class="mut" style="font-size:12px">${esc(ax.note || 'Sem observações')}</p>
+          </div>`;
+        })
+        .join('')}
+    </div>
+  </div>`;
+}
+
+function renderGapsActions(j) {
+  const gaps = j.an.gaps;
+  if (!gaps || !gaps.length) return '';
+  const ACT_LABEL = {
+    has_unlisted: ['ok', 'Destacar no currículo (já possui indício)'],
+    study: ['mid', 'Estudar / revisar antes da entrevista'],
+    ignore: ['', 'Secundário (pode ignorar)'],
+  };
+  return `<div>
+    <h3>Lacunas do currículo e ação recomendada</h3>
+    <div class="gap-list">
+      ${gaps
+        .map((g) => {
+          const [c, label] = ACT_LABEL[g.suggested] || ['', g.suggested || 'Avaliar'];
+          return `<div class="gap-item">
+            <div>
+              <strong>${esc(g.skill)}</strong>
+              ${g.why ? `<p class="mut" style="font-size:12px;margin-top:2px">${esc(g.why)}</p>` : ''}
+            </div>
+            <span class="chip ${c}">${esc(label)}</span>
+          </div>`;
+        })
+        .join('')}
+    </div>
+  </div>`;
+}
+
+function renderDossierSections(j) {
+  const sec = j.dossier && j.dossier.sections;
+  if (!sec) return '';
+  const blocks = [
+    ['Responsabilidades', sec.responsibilities || []],
+    ['Requisitos obrigatórios', sec.required || []],
+    ['Diferenciais', sec.nice_to_have || []],
+    ['Benefícios citados', sec.benefits || []],
+  ].filter(([, list]) => list.length > 0);
+  if (!blocks.length) return '';
+  return `<div class="two">
+    ${blocks.map(([title, list]) => `<div><h3>${esc(title)}</h3>${ul(list)}</div>`).join('')}
+  </div>`;
+}
+
 function tabBody(j) {
   if (S.tab === 'desc') {
     return `<p class="raw">${esc(j.desc) || '<span class="mut">Sem descrição disponível.</span>'}</p>`;
@@ -357,9 +505,12 @@ function tabBody(j) {
   const a = j.an;
   if (S.tab === 'match') {
     if (j.score == null && !a.md && !a.ok.length) {
-      return '<p class="empty">Clique em “Calcular match” acima para comparar esta vaga com o seu currículo e gerar recomendações para o ATS.</p>';
+      return '<p class="empty">Clique em “Calcular match” acima para comparar esta vaga com o seu currículo e gerar o veredito por eixos e recomendações ATS.</p>';
     }
-    return `${a.veredito ? `<div class="verdict-box"><h3>Veredito de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
+    return `${renderVerdictBanner(j)}
+      ${renderFitAxes(j)}
+      ${a.veredito ? `<div class="verdict-box"><h3>Veredito de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
+      ${renderGapsActions(j)}
       <div class="two">
         <div><h3>Você já tem</h3><div class="chips">${a.ok.map((x) => chip(x, 'ok')).join('') || '<span class="mut">Nada identificado</span>'}</div></div>
         <div><h3>Falta no currículo</h3><div class="chips">${a.falta.map((x) => chip(x, 'bad')).join('') || '<span class="mut">Nenhum gap crítico</span>'}</div></div>
@@ -368,12 +519,16 @@ function tabBody(j) {
       ${a.md ? `<div><h3>Análise detalhada</h3>${a.md.split(/\n{2,}/).map((p) => `<p class="raw" style="margin-top:8px">${esc(p)}</p>`).join('')}</div>` : ''}`;
   }
 
-  /* Visão Geral: já inclui o veredito de match e competências coloridas conforme o currículo */
+  /* Visão Geral: Dossiê v2 completo + veredito + competências coloridas */
   const hasMatch = j.score != null || a.veredito || a.falta.length > 0;
   return `${j.enriched ? '' : '<p class="mut">Esta vaga ainda não foi enriquecida pela IA. Use “Enriquecer pendentes” no Painel.</p>'}
-    ${a.veredito ? `<div class="verdict-box"><h3>Compatibilidade de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
+    ${renderVerdictBanner(j)}
+    ${!j.verdictKind && a.veredito ? `<div class="verdict-box"><h3>Compatibilidade de escala e localização</h3><p>${esc(a.veredito)}</p></div>` : ''}
     ${j.resumo ? `<div><h3>Resumo da vaga</h3><p>${esc(j.resumo)}</p></div>` : ''}
+    ${renderProvenanceSheet(j)}
+    ${renderMissingBlock(j)}
     ${j.flags.length ? `<div class="alert"><h3>Pontos de atenção</h3>${ul(j.flags)}</div>` : ''}
+    ${renderDossierSections(j)}
     ${
       j.skills.length
         ? `<div>
