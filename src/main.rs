@@ -39,7 +39,7 @@ use crate::models::{DbStats, JobFilter, JobRecord};
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -105,6 +105,12 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if !std::path::Path::new(".env").exists()
+        && std::path::Path::new("/home/bruno-vsantos/job-hunter-rs/.env").exists()
+    {
+        let _ = std::env::set_current_dir("/home/bruno-vsantos/job-hunter-rs");
+    }
+
     let _ = dotenvy::dotenv();
 
     tracing_subscriber::fmt()
@@ -119,28 +125,45 @@ async fn main() -> Result<()> {
     let db = Database::connect(&cfg.database_url).await?;
 
     match cli.command {
-        Commands::Search {
+        Some(Commands::Search {
             query,
             location,
             limit,
             remote,
-        } => {
+        }) => {
             cmd_search(&cfg, &db, &query, location.as_deref(), limit, remote).await?;
         }
-        Commands::Enrich { batch_size } => {
+        Some(Commands::Enrich { batch_size }) => {
             let count = cmd_enrich(&cfg, &db, batch_size).await?;
             println!("Enriquecimento finalizado: {} vaga(s) processada(s).", count);
         }
-        Commands::Rank { resume, top } => {
+        Some(Commands::Rank { resume, top }) => {
             cmd_rank(&cfg, &db, &resume, top).await?;
         }
-        Commands::Match { id, resume } => {
+        Some(Commands::Match { id, resume }) => {
             cmd_match(&cfg, &db, id, &resume).await?;
         }
-        Commands::Tui => {
+        Some(Commands::Tui) => {
             run_tui(cfg, db).await?;
         }
-        Commands::Web { port } => {
+        Some(Commands::Web { port }) => {
+            web::run_web_server(cfg, db, port).await?;
+        }
+        None => {
+            let port = 8787_u16;
+            let url = format!("http://localhost:{}", port);
+            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+                info!("Servidor já está ativo em {}. Abrindo no navegador...", url);
+                let _ = tokio::process::Command::new("xdg-open").arg(&url).spawn();
+                return Ok(());
+            }
+            let url_clone = url.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let _ = tokio::process::Command::new("xdg-open")
+                    .arg(&url_clone)
+                    .spawn();
+            });
             web::run_web_server(cfg, db, port).await?;
         }
     }
