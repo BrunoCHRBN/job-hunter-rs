@@ -184,7 +184,7 @@ Para um desktop Windows sem Rust, Python, Git ou compilador C++ instalado, siga 
 
 **[Instalação no Windows do zero →](docs/INSTALACAO_WINDOWS.md)**
 
-Ele cobre instalação nativa com MSVC, alternativa WSL2, configuração da chave Gemini, JobSpy opcional, atualização, backup, segurança e solução de problemas.
+Ele cobre instalação nativa com MSVC, instalador PowerShell automatizado (`scripts/install-windows.cmd`), alternativa WSL2, configuração da chave Gemini, JobSpy opcional, atualização, backup, segurança e solução de problemas.
 
 ### Configuração
 

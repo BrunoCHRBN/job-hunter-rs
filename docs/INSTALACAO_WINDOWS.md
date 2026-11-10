@@ -56,6 +56,53 @@ O aplicativo em si é leve. O espaço adicional vem principalmente do compilador
 
 Execute os passos na ordem. Abra o **PowerShell** pelo menu Iniciar. Para instalar ferramentas, use uma sessão como administrador; para compilar e executar o app, uma sessão normal é suficiente.
 
+### 3.0. Instalação automatizada (opcional)
+
+O repositório inclui um instalador PowerShell que executa as etapas 3.2 a 3.8: instala Build Tools, Git e Rust; opcionalmente instala Python 3.12 e JobSpy; cria o `.env`; clona o projeto quando necessário e compila o executável release.
+
+Há duas formas de usar:
+
+**A. A partir do repositório já baixado** — abra o PowerShell como administrador na raiz do projeto:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\install-windows.cmd -WithPython
+```
+
+Remova `-WithPython` se não quiser LinkedIn, Indeed e Glassdoor.
+
+**B. A partir de um Windows sem o repositório** — baixe somente o instalador:
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/BrunoCHRBN/job-hunter-rs/main/scripts/install-windows.ps1" `
+  -OutFile "$HOME\Downloads\install-windows.ps1"
+Unblock-File "$HOME\Downloads\install-windows.ps1"
+Set-ExecutionPolicy -Scope Process Bypass
+& "$HOME\Downloads\install-windows.ps1" -WithPython
+```
+
+O script clona o projeto em `%USERPROFILE%\Projetos\job-hunter-rs` por padrão. Para outro destino:
+
+```powershell
+& "$HOME\Downloads\install-windows.ps1" -WithPython -InstallDir "D:\Ferramentas\job-hunter-rs"
+```
+
+| Parâmetro | Efeito |
+| :--- | :--- |
+| `-WithPython` | Instala Python 3.12 e as dependências do JobSpy |
+| `-InstallDir "C:\...\job-hunter-rs"` | Define o destino quando o repositório ainda não existe |
+| `-SkipSystemTools` | Não instala ferramentas; apenas valida o ambiente e compila |
+| `-SkipBuild` | Prepara dependências e configuração sem compilar |
+| `-RunTests` | Executa `cargo test` depois do build |
+| `-NoPause` | Não espera Enter ao final; útil em automação |
+
+O instalador é idempotente: detecta ferramentas existentes, preserva um `.env` já criado e só recria o `.venv` quando necessário. Ele não grava sua chave Gemini e não inicia o servidor. Depois de concluir, edite o `.env` e siga para a etapa 3.9.
+
+> Execute o script somente depois de revisar o conteúdo dele. Ele baixa instaladores oficiais da Microsoft, Rust e, quando necessário, do Git for Windows.
+
+Se o script falhar, use as etapas manuais abaixo. A mensagem de erro indica qual ferramenta precisa ser corrigida.
+
 ### 3.1. Atualizar o Windows
 
 1. Abra **Configurações → Windows Update**.
