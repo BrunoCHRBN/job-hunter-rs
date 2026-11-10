@@ -3,108 +3,302 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Job Hunter</title>
+<title>Job Hunter — Career Intelligence</title>
 <script>try{var t=localStorage.getItem('jh-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="identity.css">
 </head>
 <body>
 <header class="nav"><div class="nav-in">
-  <a class="brand" href="#painel">Job Hunter</a>
-  <nav aria-label="Principal">
+  <a class="brand" href="#painel">
+    <span class="brand-title">Job Hunter</span>
+    <span class="brand-sub">Career Intelligence</span>
+  </a>
+  <button id="nav-toggle" class="btn ghost sm nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav">Menu</button>
+  <nav id="primary-nav" aria-label="Principal">
     <a href="#painel" data-nav="painel">Painel</a>
     <a href="#vagas" data-nav="vagas">Vagas</a>
+    <a href="#empresas" data-nav="empresas">Empresas</a>
     <a href="#funil" data-nav="funil">Funil</a>
     <a href="#curriculo" data-nav="curriculo">Currículo</a>
+    <a href="#execucoes" data-nav="execucoes">Execuções <span id="exec-badge" class="badge-dot" hidden></span></a>
+    <div class="row nav-actions">
+      <button id="btn-open-guide" class="btn ghost sm" type="button" title="Guia da Ferramenta para novos usuários"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> Guia</button>
+      <button id="theme" class="btn ghost sm" type="button">Tema escuro</button>
+    </div>
   </nav>
-  <button id="theme" class="btn ghost" type="button">Tema escuro</button>
 </div></header>
 
 <main>
-  <!-- PAINEL: coleta, números do banco e atalhos para o que importa agora -->
+  <!-- PAINEL: Visão Geral, Busca Editorial, 4 Indicadores e Recomendações Ordenadas -->
   <section id="v-painel" hidden>
+    <!-- Onboarding Checklist Banner (Dispensável via localStorage) -->
+    <div id="onboarding-banner" class="onboarding-banner" hidden>
+      <div class="onboarding-header">
+        <div>
+          <strong style="font-size:14px;color:var(--text)">Bem-vindo ao Job Hunter — Guia de Primeiros Passos</strong>
+          <p style="font-size:12px;color:var(--text-2);margin:2px 0 0">Uma central inteligente para descobrir, avaliar e acompanhar oportunidades profissionais.</p>
+        </div>
+        <button type="button" class="btn ghost sm" id="btn-dismiss-onboarding" title="Dispensar guia"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Dispensar</button>
+      </div>
+      <div class="onboarding-steps">
+        <div class="onboarding-step">
+          <strong>1. Defina seus critérios</strong>
+          <p>No menu <strong><a href="#curriculo">Currículo</a></strong>, informe sua localização base, pretensão e adicione seu perfil em Markdown.</p>
+        </div>
+        <div class="onboarding-step">
+          <strong>2. Busque em 12 fontes</strong>
+          <p>Use a barra abaixo para buscar cargos ou competências no LinkedIn, Gupy, Indeed e portais corporativos.</p>
+        </div>
+        <div class="onboarding-step">
+          <strong>3. Avalie e avance no Funil</strong>
+          <p>Na tela <strong><a href="#vagas">Vagas</a></strong>, confira o Match Score e as evidências encontradas pela IA.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4 Indicadores Estruturais e Clicáveis -->
+    <div class="stat-grid-4" style="margin-bottom:20px">
+      <a href="#vagas" class="stat-box" title="Ver todas as oportunidades">
+        <span class="stat-label">Oportunidades</span>
+        <span class="stat-val" id="stat-total-jobs">0</span>
+        <span class="stat-hint">Total identificadas</span>
+      </a>
+      <a href="#vagas" class="stat-box" title="Ver vagas com match">
+        <span class="stat-label">Matches Calculados</span>
+        <span class="stat-val" id="stat-matches-count" style="color:var(--brand)">0</span>
+        <span class="stat-hint">Analisadas com IA</span>
+      </a>
+      <a href="#vagas" class="stat-box" title="Ver vagas pendentes de match">
+        <span class="stat-label">Pendentes de Avaliação</span>
+        <span class="stat-val" id="stat-pending-count" style="color:var(--warn)">0</span>
+        <span class="stat-hint">Prontas para Match</span>
+      </a>
+      <a href="#funil" class="stat-box" title="Abrir gestão do funil">
+        <span class="stat-label">No Funil Ativo</span>
+        <span class="stat-val" id="stat-funil-count" style="color:var(--ok)">0</span>
+        <span class="stat-hint">Salvas, aplicadas ou entrevista</span>
+      </a>
+    </div>
+
     <div class="cols">
       <div class="stack">
+        <!-- Busca Rápida Editorial com Opções Recolhíveis -->
         <form id="f-coleta" class="card">
-          <h2>Coletar vagas</h2>
-          <div class="row" style="margin-top:12px">
-            <label class="grow">Cargo ou competência<input name="query" id="c-query" required placeholder="Ex: Operador de Sistemas, Auxiliar, Suporte TI, Python"></label>
-            <label class="grow">Localidade (cidade ou cidades separadas por vírgula)<input name="location" id="c-loc" value="Araraquara" placeholder="Ex: Araraquara, São Carlos"></label>
+          <div class="card-h">
+            <div>
+              <h2>Buscar Oportunidades</h2>
+              <p class="mut" style="font-size:12px">Pesquisa multi-fonte em redes profissionais, agregadores e páginas corporativas.</p>
+            </div>
+            <button class="btn primary" type="submit">Iniciar pesquisa</button>
           </div>
-          <div class="chips" style="margin-top:8px">
+
+          <div class="row" style="margin-top:10px;gap:12px">
+            <label class="grow" style="margin:0">
+              <span class="mut" style="font-size:12px;font-weight:600">Cargo, competência ou empresa</span>
+              <input name="query" id="c-query" required placeholder="Ex: Analista de Sistemas, Suporte Técnico, Python, Automação">
+            </label>
+            <label style="width:260px;margin:0">
+              <span class="mut" style="font-size:12px;font-weight:600">Localidade</span>
+              <input name="location" id="c-loc" value="Araraquara" placeholder="Ex: Araraquara, São Carlos ou Brasil">
+            </label>
+          </div>
+
+          <div class="chips" style="margin-top:10px">
             <span class="mut" style="font-size:12px;align-self:center">Sugestões rápidas:</span>
-            <button type="button" class="chip-btn" data-preset-q="Operador" data-preset-loc="Araraquara, São Carlos, Matão">Operador (Araraquara e região)</button>
+            <button type="button" class="chip-btn" data-preset-q="Operador" data-preset-loc="Araraquara, São Carlos, Matão">Operador (Região)</button>
             <button type="button" class="chip-btn" data-preset-q="Auxiliar" data-preset-loc="Araraquara">Auxiliar (Araraquara)</button>
-            <button type="button" class="chip-btn" data-preset-q="Técnico" data-preset-loc="Araraquara, São Carlos">Técnico / TI (Região)</button>
+            <button type="button" class="chip-btn" data-preset-q="Técnico" data-preset-loc="Araraquara, São Carlos">Técnico / TI</button>
             <button type="button" class="chip-btn" data-preset-q="Python" data-preset-loc="" data-preset-rem="1">Python (Remoto)</button>
           </div>
-          <div class="between row">
-            <div class="row">
-              <label class="chk"><input type="checkbox" name="remote" id="c-rem">Apenas remoto</label>
-              <label class="chk"><input type="checkbox" name="region" id="c-reg">Expandir para região (São Carlos, Matão, Américo)</label>
-              <label class="chk"><input type="checkbox" name="enrich" checked>Enriquecer com IA ao coletar</label>
+
+          <!-- Gaveta de Configurações Avançadas e Coletores -->
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-subtle)">
+            <div class="between row" style="align-items:center">
+              <button type="button" class="btn ghost sm" id="btn-toggle-options" style="font-size:12px">
+                <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></span>
+                <span id="lbl-active-collectors">Coletores &amp; Opções</span>
+                <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+              </button>
+              <a href="#empresas" class="mut" style="font-size:12px">Gerenciar páginas de carreira (ATS)</a>
             </div>
-            <button class="btn primary" type="submit">Coletar vagas</button>
+
+            <div id="search-options-drawer" style="margin-top:10px" hidden>
+              <div class="row" style="margin-bottom:10px;gap:16px">
+                <label class="chk"><input type="checkbox" name="remote" id="c-rem">Apenas vagas 100% remotas</label>
+                <label class="chk"><input type="checkbox" name="region" id="c-reg">Expandir para região (São Carlos, Matão, Américo)</label>
+                <label class="chk"><input type="checkbox" name="enrich" checked>Enriquecer com IA após coleta</label>
+              </div>
+              <div style="margin-top:8px">
+                <span class="mut" style="font-size:12px;display:block;margin-bottom:6px">Clique nos coletores para ativar ou desativar na busca:</span>
+                <div id="collectors-bar" class="chips"></div>
+              </div>
+            </div>
           </div>
+
+          <div id="source-diag-banner" style="margin-top:10px" hidden></div>
         </form>
+
+        <!-- Melhores Oportunidades (Estritamente Ordenadas Decrescentes) -->
         <div class="card">
-          <div class="card-h"><h2>Melhores matches</h2><a href="#vagas">Ver todas as vagas</a></div>
-          <ul id="top" class="plain list"></ul>
+          <div class="card-h">
+            <div>
+              <h2>Oportunidades Recomendadas</h2>
+              <p class="mut" style="font-size:12px">Vagas ordenadas por maior compatibilidade com seu currículo.</p>
+            </div>
+            <a href="#vagas" class="btn ghost sm">Ver todas as vagas</a>
+          </div>
+          <ul id="top" class="plain list" style="margin-top:6px"></ul>
         </div>
+
+        <!-- Automação & Rondas -->
         <div class="card" id="auto-card">
           <div class="card-h">
             <div>
-              <h2>Automação &amp; Rondas de Busca</h2>
+              <h2>Rondas Programadas &amp; Monitoramento</h2>
               <p id="auto-status-msg" class="mut">Carregando status do worker…</p>
             </div>
-            <button type="button" class="btn primary" id="btn-run-auto">Rodar ronda agora</button>
+            <button type="button" class="btn primary sm" id="btn-run-auto">Rodar ronda agora</button>
           </div>
-          <ul id="auto-searches" class="plain list" style="margin-top:10px"></ul>
+          <ul id="auto-searches" class="plain list" style="margin-top:8px"></ul>
           <form id="f-new-search" class="row" style="margin-top:12px;align-items:flex-end">
             <label class="grow">Nova ronda (cargo)<input name="query" required placeholder="Ex: Analista de Suporte"></label>
             <label class="grow">Localidade<input name="location" value="Araraquara, São Carlos" placeholder="Cidades ou vazio"></label>
             <label style="width:120px">Intervalo (min)<input type="number" name="interval_minutes" value="180" min="15" max="1440"></label>
             <label class="chk" style="padding-bottom:6px"><input type="checkbox" name="remote">Remoto</label>
-            <button type="submit" class="btn">Adicionar ronda</button>
+            <button type="submit" class="btn sm">Adicionar ronda</button>
           </form>
         </div>
       </div>
+
       <aside class="stack">
-        <div class="card"><h2 style="margin-bottom:12px">Seu banco de vagas</h2><dl id="stats" class="stats"></dl></div>
+        <!-- Próxima Ação Editorial -->
         <div class="card" id="next-action"></div>
+        <!-- Distribuição por Etapa -->
         <div class="card" id="stage-dist"></div>
+        <!-- Atividade Operacional Recente -->
+        <div class="card" id="last-activity-card">
+          <div class="card-h">
+            <h2>Atividade Operacional</h2>
+            <a href="#execucoes" class="btn ghost sm">Central de Execuções</a>
+          </div>
+          <div id="last-activity-body" style="font-size:13px;color:var(--text-2)">
+            <p class="mut">Nenhuma operação recente registrada.</p>
+          </div>
+        </div>
         <div class="card" id="pend" hidden></div>
       </aside>
     </div>
   </section>
 
-  <!-- VAGAS: travada na altura da viewport, busca/filtros no topo, lista e detalhe com scroll interno -->
+  <!-- VAGAS: Master-Detail Editorial com 3 Níveis de Explicabilidade de IA -->
   <section id="v-vagas" class="vagas-view" hidden>
-    <div class="filters">
+    <div class="vagas-filters-bar">
       <input type="search" data-f="q" placeholder="Buscar por cargo, empresa, cidade ou competência ( / ou Ctrl+K )" aria-label="Buscar vagas">
-      <select data-f="local" id="f-local" class="sel-fixed" aria-label="Localidade">
-        <option value="">Localidade</option>
+      <select id="f-sort" class="sel-fixed vagas-sort" aria-label="Ordenação">
+        <option value="score_desc">Maior compatibilidade</option>
+        <option value="date_desc">Mais recentes</option>
+        <option value="company_asc">Empresa (A-Z)</option>
+        <option value="location_asc">Localização</option>
       </select>
-      <select data-f="modo" aria-label="Modalidade">
-        <option value="">Modalidade</option>
-        <option value="remoto">Remoto</option>
-        <option value="hibrido">Híbrido</option>
-        <option value="presencial">Presencial</option>
-      </select>
-      <select data-f="turno" id="f-turno" class="sel-fixed" aria-label="Escala">
-        <option value="">Escala</option>
-      </select>
-      <select data-f="etapa" id="f-etapa" aria-label="Etapa">
-        <option value="">Etapa</option>
-      </select>
-      <button id="clear-f" class="btn ghost" type="button" hidden>Limpar filtros</button>
-      <span id="count" class="mut"></span>
+      <button id="btn-toggle-filters" class="btn sm filter-toggle" type="button" aria-expanded="false" aria-controls="vagas-filter-secondary">Filtros</button>
+      <div id="vagas-filter-secondary" class="vagas-filter-secondary">
+        <select data-f="local" id="f-local" class="sel-fixed" aria-label="Localidade">
+          <option value="">Localidade</option>
+        </select>
+        <select data-f="modo" aria-label="Modalidade">
+          <option value="">Modalidade</option>
+          <option value="remoto">Remoto</option>
+          <option value="hibrido">Híbrido</option>
+          <option value="presencial">Presencial</option>
+        </select>
+        <select data-f="turno" id="f-turno" class="sel-fixed" aria-label="Escala">
+          <option value="">Escala</option>
+        </select>
+        <select data-f="etapa" id="f-etapa" aria-label="Etapa">
+          <option value="">Etapa</option>
+        </select>
+        <select data-f="fonte" id="f-fonte" class="sel-fixed" aria-label="Fonte">
+          <option value="">Todas as Fontes</option>
+          <option value="gupy">Gupy</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="indeed">Indeed</option>
+          <option value="glassdoor">Glassdoor</option>
+          <option value="vagas_com">Vagas.com.br</option>
+          <option value="greenhouse">Greenhouse</option>
+          <option value="lever">Lever</option>
+          <option value="ashby">Ashby</option>
+        </select>
+        <select data-f="triagem" id="f-triagem" class="sel-fixed" aria-label="Triagem">
+          <option value="">Triagem (Todas)</option>
+          <option value="PASS">PASS (Elegível)</option>
+          <option value="REVIEW">REVIEW (Revisar)</option>
+          <option value="REJECT">REJECT (Rejeitada)</option>
+        </select>
+        <button id="btn-consolidate-dup" class="btn ghost sm" type="button" title="Unificar vagas idênticas encontradas em múltiplas fontes">Unificar duplicatas</button>
+        <button id="clear-f" class="btn ghost sm" type="button" hidden>Limpar filtros</button>
+      </div>
+      <span id="count" class="mut vagas-count"></span>
     </div>
-    <div class="split">
-      <div class="card list scroll"><ul id="list" class="plain"></ul></div>
-      <article id="detail" class="card scroll"></article>
+
+    <div class="split-editorial">
+      <div class="job-list-panel scroll"><ul id="list" class="plain"></ul></div>
+      <article id="detail" class="job-detail-panel scroll"></article>
     </div>
-    <p class="mut vagas-foot">Atalhos: <code>j</code>/<code>k</code> navegam · <code>m</code> calcula o match · <code>s</code> avança a etapa · <code>/</code> busca · <code>v</code> abre o funil · <code>r</code> abre o currículo</p>
+    <p class="mut vagas-foot" style="padding-top:6px;font-size:12px">Atalhos: <code>j</code>/<code>k</code> navegam · <code>m</code> calcula match · <code>s</code> avança etapa · <code>/</code> busca · <code>v</code> funil · <code>r</code> currículo</p>
+  </section>
+
+  <!-- EMPRESAS (Sprint 11 — Company Intelligence & ATS Boards) -->
+  <section id="v-empresas" hidden>
+    <div class="page-h">
+      <div>
+        <h1 style="font-size:20px">Company Intelligence &amp; Páginas de Carreira</h1>
+        <p>Monitore empresas prioritárias, consulte portais ATS diretamente (Gupy, Greenhouse, Lever, Ashby) e compare oportunidades.</p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="btn-rescreen-all">Reavaliar Triagem Determinística</button>
+      </div>
+    </div>
+
+    <form id="f-new-company" class="card" style="margin-bottom:16px">
+      <h2>Cadastrar / Atualizar Empresa Monitorada</h2>
+      <div class="row" style="margin-top:10px">
+        <label class="grow">Nome Oficial<input name="official_name" required placeholder="Ex: Embraer, Raízen, Nubank"></label>
+        <label class="grow">Segmento<input name="segment" placeholder="Ex: Indústria, Energia, Tecnologia"></label>
+        <label class="grow">Localização Base<input name="location" value="Araraquara - SP" placeholder="Ex: Araraquara / São Carlos - SP"></label>
+        <label class="grow">Website<input name="website" placeholder="https://..."></label>
+      </div>
+      <div class="row" style="margin-top:10px;align-items:flex-end">
+        <label style="width:170px">Provedor ATS
+          <select name="ats_provider">
+            <option value="gupy">Gupy</option>
+            <option value="greenhouse">Greenhouse</option>
+            <option value="lever">Lever</option>
+            <option value="ashby">Ashby</option>
+            <option value="workday">Workday / JSON-LD</option>
+          </select>
+        </label>
+        <label class="grow">Identificador do Portal (slug ATS)<input name="portal_id" placeholder="Ex: raizen, citrosuco, nubank"></label>
+        <label class="grow">URL da Página de Carreira<input name="career_url" placeholder="Ex: https://raizen.gupy.io"></label>
+        <label class="chk" style="padding-bottom:6px"><input type="checkbox" name="is_monitored" checked>Monitorada</label>
+        <label class="chk" style="padding-bottom:6px"><input type="checkbox" name="is_preferred">Preferida (+Score)</label>
+        <label class="chk" style="padding-bottom:6px"><input type="checkbox" name="is_excluded">Excluída (Bloqueada)</label>
+        <button type="submit" class="btn primary">Salvar Empresa</button>
+      </div>
+    </form>
+
+    <div class="cols">
+      <div class="card">
+        <div class="card-h">
+          <h2>Diretório de Empresas</h2>
+          <label class="chk" style="font-size:12px"><input type="checkbox" id="chk-only-monitored">Apenas monitoradas</label>
+        </div>
+        <ul id="companies-list" class="plain list" style="margin-top:10px"></ul>
+      </div>
+      <div id="company-detail-pane" class="card">
+        <p class="mut">Selecione uma empresa à esquerda para inspecionar suas fontes ATS, variações de nome (aliases) e oportunidades vinculadas.</p>
+      </div>
+    </div>
   </section>
 
   <!-- FUNIL: acompanhamento por etapa com drag-and-drop -->
@@ -124,7 +318,7 @@
       <div class="card-h">
         <div>
           <h2>Critérios Operacionais &amp; Pré-Filtro Automático</h2>
-          <p class="mut">Estes critérios alimentam o cálculo de Match/Fit v2 (substituindo valores fixos) e descartam vagas irrelevantes na coleta.</p>
+          <p class="mut">Estes critérios alimentam a Triagem Determinística (Sprint 12) e o cálculo de Match/Fit v2 sem penalizar dados omissos.</p>
         </div>
         <button type="submit" class="btn primary" id="save-profile">Salvar critérios</button>
       </div>
@@ -156,8 +350,42 @@
         </div>
         <p>O match e a análise ATS usam este texto em Markdown. Use <code>Ctrl+S</code> para salvar rapidamente.</p>
       </div>
-      <button id="save-cv" class="btn primary" type="button">Salvar currículo</button>
+      <div class="row" style="gap:8px;align-items:center">
+        <input type="file" id="cv-pdf-input" accept=".pdf" style="display:none">
+        <button id="btn-import-pdf" class="btn" type="button" title="Importar arquivo PDF do currículo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+          Importar PDF
+        </button>
+        <button id="save-cv" class="btn primary" type="button">Salvar currículo</button>
+      </div>
     </div>
+
+    <!-- Dropzone de Importação de Currículo em PDF -->
+    <div id="cv-dropzone" class="cv-dropzone card">
+      <div class="cv-dropzone-inner">
+        <div class="cv-dropzone-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <path d="M12 18v-6"></path>
+            <path d="m9 15 3-3 3 3"></path>
+          </svg>
+        </div>
+        <div class="cv-dropzone-info">
+          <div class="cv-dropzone-title">Adicionar currículo via arquivo PDF</div>
+          <div class="cv-dropzone-desc">Arraste seu PDF aqui ou selecione do computador. O texto será extraído localmente e estruturado com IA em Markdown limpo para você revisar antes de salvar.</div>
+        </div>
+        <div class="row" style="gap:8px">
+          <button type="button" class="btn small" id="btn-select-pdf">Selecionar PDF</button>
+        </div>
+      </div>
+      <div id="cv-dropzone-loading" class="cv-dropzone-loading" hidden>
+        <svg class="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+        <span id="cv-dropzone-status">Lendo páginas do PDF e estruturando seções em Markdown...</span>
+      </div>
+      <div id="cv-dropzone-feedback" class="cv-dropzone-meta" style="margin-top:8px" hidden></div>
+    </div>
+
     <div class="cv-split">
       <div class="cv-pane">
         <label class="cv-pane-h" for="cv">Markdown (<code>curriculo.md</code>)</label>
@@ -169,6 +397,201 @@
       </div>
     </div>
   </section>
+
+  <!-- EXECUÇÕES & OBSERVABILIDADE + TELEMETRIA IA (Sprints 08 & 13) -->
+  <section id="v-execucoes" hidden>
+    <div class="page-h">
+      <div>
+        <div class="row" style="align-items:center;gap:10px">
+          <h1 style="font-size:20px">Central de Execuções, Observabilidade &amp; Telemetria IA</h1>
+          <span id="sse-status" class="chip ok">SSE Conectado</span>
+        </div>
+        <p>Acompanhamento estruturado em tempo real de buscas, coletores, triagem, cache BLAKE3 e consumo de tokens do Gemini.</p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="btn-refresh-execs">Atualizar dados</button>
+      </div>
+    </div>
+
+    <!-- Dashboard Geral de Indicadores (Sprint 14.1) -->
+    <div id="exec-dashboard-stats" class="row" style="gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Execuções Ativas</span>
+        <strong id="st-exec-active" style="font-size:22px;color:var(--brand)">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Concluídas</span>
+        <strong id="st-exec-completed" style="font-size:22px;color:var(--ok)">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Falhas / Cancelamentos</span>
+        <strong id="st-exec-failed" style="font-size:22px;color:var(--bad)">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Total de Vagas</span>
+        <strong id="st-exec-jobs" style="font-size:22px">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Origens Rastreadas</span>
+        <strong id="st-exec-sources" style="font-size:22px">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Operações IA</span>
+        <strong id="st-exec-ai-ops" style="font-size:22px">0</strong>
+      </div>
+      <div class="card stat-card grow">
+        <span class="mut" style="font-size:12px">Tempo Médio</span>
+        <strong id="st-exec-avg-time" style="font-size:22px">0s</strong>
+      </div>
+    </div>
+
+    <!-- Monitor de Fontes e Coletores (Sprint 14.2) -->
+    <div class="card" id="collectors-monitor-card" style="margin-bottom:16px">
+      <div class="card-h">
+        <div>
+          <h2>Monitor de Fontes e Coletores (Multi-Fonte)</h2>
+          <p class="mut" style="font-size:12px">Disponibilidade, tempos de resposta e contagem de vagas por canal.</p>
+        </div>
+      </div>
+      <div id="collectors-monitor-grid" class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap"></div>
+    </div>
+
+    <!-- Banner de Execução Ativa / Em Andamento -->
+    <div id="active-exec-card" class="card" style="margin-bottom:16px" hidden>
+      <div class="card-h">
+        <div class="row" style="align-items:center;gap:8px">
+          <span class="badge running pulse" id="act-status">RUNNING</span>
+          <h2 id="act-title">Execução em andamento</h2>
+          <span class="mut" id="act-id" style="font-family:monospace;font-size:12px"></span>
+        </div>
+        <button type="button" class="btn danger" id="btn-cancel-act">Cancelar execução</button>
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="between row" style="font-size:13px;margin-bottom:4px">
+          <span id="act-stage-label" class="mut">Etapa: Iniciando…</span>
+          <strong id="act-progress-label">0%</strong>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="act-progress-fill" class="progress-bar-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;gap:20px;font-size:13px">
+        <div><span class="mut">Processados:</span> <strong id="act-processed">0</strong></div>
+        <div><span class="mut">Falhas:</span> <strong id="act-failed">0</strong></div>
+        <div><span class="mut">Etapa Atual:</span> <strong id="act-current-stage">—</strong></div>
+      </div>
+
+      <div style="margin-top:14px">
+        <h3 style="font-size:13px;margin-bottom:6px">Eventos em tempo real</h3>
+        <div id="act-events-stream" class="event-stream-box"></div>
+      </div>
+    </div>
+
+    <!-- Painel de Telemetria, Custos e Cache de IA (Sprint 13) -->
+    <div class="card" id="ai-telemetry-card" style="margin-bottom:16px">
+      <div class="card-h">
+        <div>
+          <h2>Telemetria Gemini IA &amp; Controle de Custos (Sprint 13)</h2>
+          <p class="mut" style="font-size:12px">Rastreabilidade de modelos, tokens estimados/reais, fallbacks automáticos e economia por cache BLAKE3.</p>
+        </div>
+      </div>
+      <div id="ai-telemetry-summary" class="row" style="margin-top:12px;gap:18px;flex-wrap:wrap"></div>
+    </div>
+
+    <!-- Histórico de Execuções -->
+    <div class="card">
+      <div class="card-h">
+        <h2>Histórico de Operações</h2>
+        <div class="row" style="gap:8px">
+          <select id="filter-exec-type" class="sel-fixed" style="font-size:13px">
+            <option value="">Todos os tipos</option>
+            <option value="JOB_SEARCH">Busca de Vagas</option>
+            <option value="COMPANY_SEARCH">Varredura de Empresa</option>
+            <option value="AI_ENRICHMENT">Enriquecimento IA</option>
+            <option value="JOB_SCREENING">Screening / Rank</option>
+            <option value="MATCH_ANALYSIS">Análise de Match</option>
+            <option value="AUTOMATION">Automação</option>
+          </select>
+          <select id="filter-exec-status" class="sel-fixed" style="font-size:13px">
+            <option value="">Todos os status</option>
+            <option value="COMPLETED">Concluído</option>
+            <option value="PARTIALLY_COMPLETED">Parcial</option>
+            <option value="FAILED">Falha</option>
+            <option value="CANCELLED">Cancelado</option>
+            <option value="RUNNING">Em execução</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-responsive" style="margin-top:12px">
+        <table class="exec-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Tipo</th>
+              <th>Origem</th>
+              <th>Status</th>
+              <th>Progresso</th>
+              <th>Processados</th>
+              <th>Falhas</th>
+              <th>Duração</th>
+              <th>Início</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="execs-table-body">
+            <tr><td colspan="10" class="mut" style="text-align:center;padding:16px">Carregando execuções…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal de Detalhes da Execução Selecionada -->
+    <div id="exec-detail-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-exec-title" tabindex="-1" hidden>
+      <div class="modal-card">
+        <div class="card-h">
+          <div>
+            <h2 id="modal-exec-title">Detalhes da Execução</h2>
+            <span id="modal-exec-id" class="mut" style="font-family:var(--font-mono);font-size:12px"></span>
+          </div>
+          <button type="button" class="btn ghost sm" id="modal-exec-close"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Fechar</button>
+        </div>
+        <div id="modal-exec-content" style="margin-top:12px;max-height:70vh;overflow-y:auto"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Modal de Guia da Ferramenta e Onboarding (Career Intelligence) -->
+  <div id="guide-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="guide-modal-title" tabindex="-1" hidden>
+    <div class="modal-card" style="max-width:680px">
+      <div class="card-h">
+        <div>
+          <h2 id="guide-modal-title">Guia Rápido — Job Hunter Career Intelligence</h2>
+          <span class="mut" style="font-size:12px">Como aproveitar ao máximo a plataforma</span>
+        </div>
+        <button type="button" class="btn ghost sm" id="guide-modal-close"><span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Fechar</button>
+      </div>
+      <div class="stack" style="gap:16px;margin-top:12px;font-size:13.5px;line-height:1.6">
+        <div>
+          <strong style="color:var(--brand)">1. Busca Multi-Fonte &amp; Deduplicação</strong>
+          <p class="mut">O sistema pesquisa simultaneamente em redes como LinkedIn, Indeed, Glassdoor, Gupy, Vagas.com.br e portais corporativos (Greenhouse, Lever, Ashby). Se a mesma vaga for publicada em dois sites, ela é unificada automaticamente sem registros repetidos.</p>
+        </div>
+        <div>
+          <strong style="color:var(--ok)">2. Triagem Determinística (Camada 1)</strong>
+          <p class="mut">Antes de gastar processamento de IA, o sistema avalia regras objetivas (localização, restrições e termos proibidos). Se uma informação como salário não for informada no anúncio, o sistema <em>não penaliza</em> sua nota por isso.</p>
+        </div>
+        <div>
+          <strong style="color:var(--accent)">3. Match Score &amp; Evidências com IA (Camada 2)</strong>
+          <p class="mut">O Gemini compara seu currículo em Markdown com os requisitos da vaga em 3 níveis claros: o Resultado geral, os Eixos (competências, senioridade, turno) e as Evidências comprovadas versus lacunas reais.</p>
+        </div>
+        <div>
+          <strong style="color:var(--warn)">4. Gestão no Funil de Candidaturas</strong>
+          <p class="mut">Use as etapas do Funil (Descoberta &rarr; Salva &rarr; Aplicada &rarr; Entrevista) para acompanhar seu avanço profissional sem perder o histórico.</p>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 
 <div id="toast" role="status" aria-live="polite" hidden></div>

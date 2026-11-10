@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde::Serialize;
+use serde_json::json;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -11,6 +12,7 @@ use tracing::{info, warn};
 use crate::collectors;
 use crate::config::AppConfig;
 use crate::db::{cosine_similarity, Database};
+use crate::execution::{ExecutionEngine, ExecutionType};
 use crate::gemini::GeminiClient;
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -21,6 +23,7 @@ pub struct AutomationRuntimeStatus {
     pub total_auto_collected: usize,
     pub total_auto_enriched: usize,
     pub total_auto_matched: usize,
+    pub total_auto_companies_scanned: usize,
 }
 
 pub type SharedAutomationStatus = Arc<RwLock<AutomationRuntimeStatus>>;
@@ -33,23 +36,25 @@ pub fn new_shared_status() -> SharedAutomationStatus {
         total_auto_collected: 0,
         total_auto_enriched: 0,
         total_auto_matched: 0,
+        total_auto_companies_scanned: 0,
     }))
 }
 
 pub fn spawn_automation_worker(
     cfg: AppConfig,
     db: Database,
+    engine: Arc<ExecutionEngine>,
     status: SharedAutomationStatus,
 ) {
     tokio::spawn(async move {
-        info!("🤖 Worker Autônomo (Zero-Touch) iniciado em background.");
+        info!("[Worker] Autônomo iniciado em background.");
         // Aguarda 8 segundos após o boot do servidor antes do primeiro check
         tokio::time::sleep(Duration::from_secs(8)).await;
 
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
-            if let Err(err) = run_automation_tick(&cfg, &db, &status, false).await {
+            if let Err(err) = run_automation_tick(&cfg, &db, &engine, &status, false).await {
                 warn!("Erro no ciclo do Worker Autônomo: {}", err);
             }
         }
@@ -65,6 +70,7 @@ pub fn spawn_automation_worker(
 pub async fn run_automation_tick(
     cfg: &AppConfig,
     db: &Database,
+    engine: &Arc<ExecutionEngine>,
     status: &SharedAutomationStatus,
     force_all_searches: bool,
 ) -> Result<String> {
@@ -76,7 +82,7 @@ pub async fn run_automation_tick(
         guard.is_running_cycle = true;
     }
 
-    let res = execute_pipeline_steps(cfg, db, status, force_all_searches).await;
+    let res = execute_pipeline_steps(cfg, db, engine, status, force_all_searches).await;
 
     {
         let mut guard = status.write().await;
@@ -92,6 +98,7 @@ pub async fn run_automation_tick(
 async fn execute_pipeline_steps(
     cfg: &AppConfig,
     db: &Database,
+    engine: &Arc<ExecutionEngine>,
     status: &SharedAutomationStatus,
     force_all_searches: bool,
 ) -> Result<String> {
@@ -108,6 +115,39 @@ async fn execute_pipeline_steps(
         db.get_due_saved_searches().await?
     };
 
+    let has_searches = !searches.is_empty();
+    let unenriched_sample = if profile.auto_enrich != 0 || force_all_searches {
+        db.get_unenriched_jobs(1).await?.len()
+    } else {
+        0
+    };
+
+    let due_companies = if force_all_searches {
+        db.get_due_monitored_companies(5).await.unwrap_or_default()
+    } else {
+        db.get_due_monitored_companies(3).await.unwrap_or_default()
+    };
+
+    // Só inicia uma execução formal se houver trabalho real a fazer
+    let exec_handle = if has_searches || unenriched_sample > 0 || !due_companies.is_empty() || force_all_searches {
+        let meta = json!({
+            "force_all_searches": force_all_searches,
+            "searches_count": searches.len(),
+            "auto_enrich": profile.auto_enrich,
+            "due_companies_count": due_companies.len(),
+        });
+        engine
+            .start_execution(
+                ExecutionType::Automation,
+                if force_all_searches { "MANUAL_TRIGGER" } else { "WORKER_TICK" },
+                Some(meta),
+            )
+            .await
+            .ok()
+    } else {
+        None
+    };
+
     let mut newly_collected = 0usize;
     let mut searches_ran = 0usize;
 
@@ -117,14 +157,28 @@ async fn execute_pipeline_steps(
         } else {
             Some(s.location.as_str())
         };
-        match collectors::collect_all(cfg, db, &s.query, loc_opt, 15, s.remote != 0).await {
+
+        if let Some(ref h) = exec_handle {
+            h.emit_info(
+                "saved_search",
+                Some("automation"),
+                &format!("Executando busca salva programada: '{}' ({})", s.query, s.location),
+            )
+            .await;
+        }
+
+        match collectors::collect_all(cfg, db, &s.query, loc_opt, 15, s.remote != 0, exec_handle.as_ref()).await {
             Ok(rep) => {
                 newly_collected += rep.newly_inserted;
                 searches_ran += 1;
                 let _ = db.mark_saved_search_ran(s.id, rep.newly_inserted).await;
             }
             Err(err) => {
-                warn!("Falha na ronda automática '{}': {}", s.query, err);
+                let msg = format!("Falha na ronda automática '{}': {}", s.query, err);
+                warn!("{}", msg);
+                if let Some(ref h) = exec_handle {
+                    h.emit_warn("saved_search", Some("automation"), &msg).await;
+                }
             }
         }
     }
@@ -134,7 +188,7 @@ async fn execute_pipeline_steps(
     let mut matched_now = 0usize;
 
     if let Ok(api_key) = cfg.require_gemini_key() {
-        let gemini = GeminiClient::new(api_key)?;
+        let gemini = GeminiClient::new(api_key)?.with_db(db.clone());
 
         if profile.auto_enrich != 0 || force_all_searches {
             let unenriched = db.get_unenriched_jobs(5).await?;
@@ -202,7 +256,7 @@ async fn execute_pipeline_steps(
                     // Processa até 2 auto-matches por ciclo para respeitar rate-limits
                     for (job, sim) in candidates.into_iter().take(2) {
                         info!(
-                            "🎯 Auto-Match acionado para vaga #{} ({} — sim: {:.1}% >= {:.1}%)",
+                            "[Auto-Match] Candidato selecionado para vaga #{} ({} — sim: {:.1}% >= {:.1}%)",
                             job.id,
                             job.title_str(),
                             sim * 100.0,
@@ -239,30 +293,76 @@ async fn execute_pipeline_steps(
         }
     }
 
-    {
-        let mut guard = status.write().await;
-        guard.total_auto_collected += newly_collected;
-        guard.total_auto_enriched += enriched_now;
-        guard.total_auto_matched += matched_now;
+    // 4. Monitoramento corporativo de empresas cadastradas (Sprint 15)
+    let mut companies_scanned = 0usize;
+    let mut company_new_jobs = 0usize;
+
+    for (comp_id, comp_name) in due_companies {
+        if let Some(ref h) = exec_handle {
+            h.emit_info(
+                "company_monitoring",
+                Some("automation"),
+                &format!("Varrendo oportunidades corporativas para '{}' (ID {})", comp_name, comp_id),
+            ).await;
+        }
+
+        match db.scan_company_opportunities(comp_id, None, 25, exec_handle.as_ref()).await {
+            Ok(rep) => {
+                companies_scanned += 1;
+                company_new_jobs += rep.newly_inserted;
+            }
+            Err(err) => {
+                let msg = format!("Falha na varredura da empresa '{}': {}", comp_name, err);
+                warn!("{}", msg);
+                if let Some(ref h) = exec_handle {
+                    h.emit_warn("company_monitoring", Some("automation"), &msg).await;
+                }
+            }
+        }
     }
 
-    let summary = if searches_ran == 0 && enriched_now == 0 && matched_now == 0 {
+    {
+        let mut guard = status.write().await;
+        guard.total_auto_collected += newly_collected + company_new_jobs;
+        guard.total_auto_enriched += enriched_now;
+        guard.total_auto_matched += matched_now;
+        guard.total_auto_companies_scanned += companies_scanned;
+    }
+
+    let summary = if searches_ran == 0 && enriched_now == 0 && matched_now == 0 && companies_scanned == 0 {
         "Monitoramento em dia (nenhuma pendência no momento).".to_string()
     } else {
         format!(
-            "Rondas: {} executada(s), +{} vaga(s) nova(s), {} enriquecida(s), {} auto-match(es).",
-            searches_ran, newly_collected, enriched_now, matched_now
+            "Ciclo concluído: {} busca(s) rodada(s), {} empresa(s) monitorada(s), {} nova(s) vaga(s), {} enriquecida(s), {} analisada(s) com Match.",
+            searches_ran, companies_scanned, newly_collected + company_new_jobs, enriched_now, matched_now
         )
     };
+
+    if let Some(h) = exec_handle {
+        h.record_metric("auto_searches_ran", searches_ran as f64, "count").await.ok();
+        h.record_metric("auto_companies_scanned", companies_scanned as f64, "count").await.ok();
+        h.record_metric("auto_newly_collected", (newly_collected + company_new_jobs) as f64, "count").await.ok();
+        h.record_metric("auto_enriched", enriched_now as f64, "count").await.ok();
+        h.record_metric("auto_matched", matched_now as f64, "count").await.ok();
+        h.finish_success(
+            (newly_collected + company_new_jobs + enriched_now + matched_now) as i64,
+            0,
+            Some(&summary),
+        )
+        .await
+        .ok();
+    }
 
     Ok(summary)
 }
 
 async fn send_desktop_notification(title: &str, body: &str) {
     let _ = Command::new("notify-send")
-        .arg("--app-name=Job Hunter RS")
+        .arg("-a")
+        .arg("Job Hunter RS")
+        .arg("-i")
+        .arg("briefcase")
         .arg(title)
         .arg(body)
-        .output()
-        .await;
+        .spawn();
 }

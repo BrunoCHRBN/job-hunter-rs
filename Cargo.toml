@@ -5,8 +5,17 @@ edition = "2021"
 description = "CLI e TUI em Rust para coleta automatizada de vagas, enriquecimento com Gemini REST v1beta, busca vetorial e Match Score/ATS"
 authors = ["Bruno V. Santos"]
 
+[lib]
+name = "job_hunter_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "job-hunter"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -24,3 +33,8 @@ thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
+pdf-extract = "0.12.1"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

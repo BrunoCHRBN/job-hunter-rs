@@ -1,9 +1,13 @@
 pub mod automation;
 pub mod collectors;
+pub mod companies;
 pub mod config;
 pub mod db;
+pub mod execution;
 pub mod gemini;
 pub mod models;
+pub mod normalizer;
+pub mod screening;
 pub mod web;
 
 use std::fs;
@@ -103,14 +107,23 @@ enum Commands {
     },
 }
 
+fn open_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.args(["/C", "start", ""]);
+        cmd
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = tokio::process::Command::new("open");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = tokio::process::Command::new("xdg-open");
+
+    let _ = cmd.arg(url).spawn();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    if !std::path::Path::new(".env").exists()
-        && std::path::Path::new("/home/bruno-vsantos/job-hunter-rs/.env").exists()
-    {
-        let _ = std::env::set_current_dir("/home/bruno-vsantos/job-hunter-rs");
-    }
-
     let _ = dotenvy::dotenv();
 
     tracing_subscriber::fmt()
@@ -123,6 +136,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = AppConfig::from_env();
     let db = Database::connect(&cfg.database_url).await?;
+    let engine = execution::ExecutionEngine::new(db.clone());
 
     match cli.command {
         Some(Commands::Search {
@@ -131,7 +145,7 @@ async fn main() -> Result<()> {
             limit,
             remote,
         }) => {
-            cmd_search(&cfg, &db, &query, location.as_deref(), limit, remote).await?;
+            cmd_search(&cfg, &db, &engine, &query, location.as_deref(), limit, remote).await?;
         }
         Some(Commands::Enrich { batch_size }) => {
             let count = cmd_enrich(&cfg, &db, batch_size).await?;
@@ -147,24 +161,22 @@ async fn main() -> Result<()> {
             run_tui(cfg, db).await?;
         }
         Some(Commands::Web { port }) => {
-            web::run_web_server(cfg, db, port).await?;
+            web::run_web_server(cfg, db, engine, port).await?;
         }
         None => {
             let port = 8787_u16;
             let url = format!("http://localhost:{}", port);
             if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
                 info!("Servidor já está ativo em {}. Abrindo no navegador...", url);
-                let _ = tokio::process::Command::new("xdg-open").arg(&url).spawn();
+                open_browser(&url);
                 return Ok(());
             }
             let url_clone = url.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                let _ = tokio::process::Command::new("xdg-open")
-                    .arg(&url_clone)
-                    .spawn();
+                open_browser(&url_clone);
             });
-            web::run_web_server(cfg, db, port).await?;
+            web::run_web_server(cfg, db, engine, port).await?;
         }
     }
 
@@ -174,6 +186,7 @@ async fn main() -> Result<()> {
 async fn cmd_search(
     cfg: &AppConfig,
     db: &Database,
+    engine: &std::sync::Arc<execution::ExecutionEngine>,
     query: &str,
     location: Option<&str>,
     limit: usize,
@@ -187,24 +200,83 @@ async fn cmd_search(
         if remote { "Sim" } else { "Não" }
     );
 
-    let report = collectors::collect_all(cfg, db, query, location, limit, remote).await?;
+    let meta = serde_json::json!({
+        "query": query,
+        "location": location,
+        "limit": limit,
+        "remote": remote,
+    });
+    let exec_handle = engine
+        .start_execution(execution::ExecutionType::JobSearch, "CLI", Some(meta))
+        .await?;
 
-    println!("\n=== Resumo da Coleta ===");
+    let report_res = collectors::collect_all(
+        cfg,
+        db,
+        query,
+        location,
+        limit,
+        remote,
+        Some(&exec_handle),
+    )
+    .await;
+
+    let report = match report_res {
+        Ok(rep) => {
+            let _ = exec_handle
+                .finish_success(
+                    rep.newly_inserted as i64,
+                    0,
+                    Some("Busca via CLI concluída com sucesso"),
+                )
+                .await;
+            rep
+        }
+        Err(err) => {
+            let _ = exec_handle.finish_failure(&err.to_string()).await;
+            return Err(err);
+        }
+    };
+
+    println!("\n=== Resumo da Coleta Multi-Fonte ===");
     println!("  • Vagas retornadas pela Gupy   : {}", report.gupy_count);
     println!("  • Vagas retornadas pelo JobSpy : {}", report.jobspy_count);
+    println!("    - LinkedIn                   : {}", report.linkedin_count);
+    println!("    - Indeed                     : {}", report.indeed_count);
+    println!("    - Glassdoor                  : {}", report.glassdoor_count);
+    println!("  • Vagas retornadas Vagas.com.br: {}", report.vagas_com_count);
     println!("  • Total bruto coletado         : {}", report.total_fetched);
     println!("  • Novas vagas salvas no SQLite : {}", report.newly_inserted);
     println!(
-        "  • Duplicadas ignoradas (blake3): {}",
+        "  • Origens unificadas (dedup)   : {}",
         report.duplicates_skipped
     );
+    if !report.source_diagnostics.is_empty() {
+        println!("\n  [Diagnóstico Individual por Fonte]");
+        for d in &report.source_diagnostics {
+            println!(
+                "    • {:<22} [{:<8}] {:>3} vagas ({:>4}ms) — {}",
+                d.display_name,
+                d.status.as_str(),
+                d.count,
+                d.duration_ms,
+                d.message
+            );
+        }
+    }
+    if !report.warnings.is_empty() {
+        println!("  • Avisos registrados nas fontes: {}", report.warnings.len());
+        for w in &report.warnings {
+            println!("    ⚠️  {}", w);
+        }
+    }
 
     Ok(())
 }
 
 async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result<usize> {
     let api_key = cfg.require_gemini_key()?;
-    let gemini = GeminiClient::new(api_key)?;
+    let gemini = GeminiClient::new(api_key)?.with_db(db.clone());
     let effective_batch = batch_size.clamp(1, 5);
 
     let unenriched = db.get_unenriched_jobs(100).await?;
@@ -287,7 +359,7 @@ async fn cmd_enrich(cfg: &AppConfig, db: &Database, batch_size: usize) -> Result
 
 async fn cmd_rank(cfg: &AppConfig, db: &Database, resume_path: &str, top: usize) -> Result<()> {
     let api_key = cfg.require_gemini_key()?;
-    let gemini = GeminiClient::new(api_key)?;
+    let gemini = GeminiClient::new(api_key)?.with_db(db.clone());
 
     let resume_md = fs::read_to_string(resume_path)
         .with_context(|| format!("Não foi possível ler o currículo em '{}'", resume_path))?;
@@ -335,7 +407,7 @@ async fn cmd_rank(cfg: &AppConfig, db: &Database, resume_path: &str, top: usize)
 
 async fn cmd_match(cfg: &AppConfig, db: &Database, job_id: i64, resume_path: &str) -> Result<()> {
     let api_key = cfg.require_gemini_key()?;
-    let gemini = GeminiClient::new(api_key)?;
+    let gemini = GeminiClient::new(api_key)?.with_db(db.clone());
 
     let job = db
         .get_job_by_id(job_id)

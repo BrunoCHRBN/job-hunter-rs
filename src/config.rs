@@ -18,13 +18,25 @@ impl AppConfig {
         let database_url = env::var("DATABASE_URL")
             .unwrap_or_else(|_| "sqlite://jobs.db".to_string());
         let python_bin = match env::var("PYTHON_BIN") {
-            Ok(val) if !val.trim().is_empty() && val != "python3" => val,
+            Ok(val) if !val.trim().is_empty() => val,
             _ => {
-                if Path::new(".venv/bin/python").exists() {
-                    ".venv/bin/python".to_string()
-                } else {
-                    "python3".to_string()
-                }
+                let candidates = [
+                    ".venv/bin/python",
+                    ".venv/Scripts/python.exe",
+                    "job-hunter-rs/.venv/bin/python",
+                    "job-hunter-rs/.venv/Scripts/python.exe",
+                ];
+                candidates
+                    .iter()
+                    .find(|path| Path::new(path).exists())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        if cfg!(target_os = "windows") {
+                            "python".to_string()
+                        } else {
+                            "python3".to_string()
+                        }
+                    })
             }
         };
         let resume_path = env::var("RESUME_PATH")

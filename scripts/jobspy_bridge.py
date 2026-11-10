@@ -3,12 +3,13 @@
 Bridge script para coleta de vagas utilizando python-jobspy.
 Imprime exclusivamente um array JSON no stdout com os campos:
 external_id, source, title, company, location, url, raw_description, published_at.
+Envia logs estruturados de status por rede para o stderr (SITE_STATS / SITE_ERR).
 """
 
 import argparse
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 
 def safe_str(val: Any) -> str:
@@ -18,6 +19,19 @@ def safe_str(val: Any) -> str:
     if s.lower() in ("nan", "none", "null", "<na>"):
         return ""
     return s
+
+
+def parse_locations(raw_loc: str) -> List[str]:
+    cleaned = raw_loc.strip()
+    if not cleaned or cleaned.lower() in ("brasil", "brazil", "remoto"):
+        return ["Brasil"]
+
+    # Se houver separador de vírgula ou ponto-e-vírgula, separa em cidades individuais
+    parts = [p.strip() for p in cleaned.replace(";", ",").split(",") if p.strip()]
+    if not parts:
+        return ["Brasil"]
+    # Limita a no máximo 3 cidades por rodada para não estourar o tempo de resposta
+    return parts[:3]
 
 
 def main() -> int:
@@ -32,56 +46,74 @@ def main() -> int:
     try:
         from jobspy import scrape_jobs  # type: ignore
     except Exception as exc:
-        sys.stderr.write(f" jobspy indisponível: {exc}\n")
-        print("[]")
-        return 0
-
-    try:
-        df = scrape_jobs(
-            site_name=["linkedin", "indeed", "glassdoor"],
-            search_term=args.query,
-            location=args.location,
-            results_wanted=args.results,
-            hours_old=args.hours_old,
-            is_remote=args.remote,
-            country_indeed="Brazil",
+        sys.stderr.write(
+            f"JOB_SPY_ERROR: Pacote 'jobspy' não está instalado no interpretador atual ({sys.executable}). "
+            f"Instale as dependências com: pip install -r requirements.txt. Detalhe: {exc}\n"
         )
-    except Exception as exc:
-        sys.stderr.write(f"Erro ao executar scrape_jobs: {exc}\n")
         print("[]")
-        return 0
+        return 2
 
-    if df is None or len(df) == 0:
-        print("[]")
-        return 0
+    locations = parse_locations(args.location)
+    sites = ["linkedin", "indeed", "glassdoor"]
+    per_site_results = max(3, args.results // len(locations)) if len(locations) > 1 else args.results
 
     records: List[Dict[str, Any]] = []
-    for idx, row in df.iterrows():
-        raw_id = safe_str(row.get("id"))
-        site = safe_str(row.get("site")) or "jobspy"
-        url = safe_str(row.get("job_url"))
-        title = safe_str(row.get("title"))
-        company = safe_str(row.get("company"))
-        location = safe_str(row.get("location"))
-        description = safe_str(row.get("description"))
-        date_posted = safe_str(row.get("date_posted"))
+    seen_keys: Set[str] = set()
 
-        if not title and not url:
-            continue
+    for site in sites:
+        site_total = 0
+        for loc in locations:
+            try:
+                df = scrape_jobs(
+                    site_name=[site],
+                    search_term=args.query,
+                    location=loc,
+                    results_wanted=per_site_results,
+                    hours_old=args.hours_old,
+                    is_remote=args.remote,
+                    country_indeed="Brazil",
+                )
+            except Exception as exc:
+                sys.stderr.write(f"SITE_ERR:{site}:{loc}={exc}\n")
+                continue
 
-        external_id = raw_id if raw_id else f"{site}-{idx}"
-        records.append(
-            {
-                "external_id": external_id,
-                "source": f"jobspy:{site}",
-                "title": title or "Sem Título",
-                "company": company or "Empresa Confidencial",
-                "location": location or args.location,
-                "url": url,
-                "raw_description": description,
-                "published_at": date_posted if date_posted else None,
-            }
-        )
+            if df is None or len(df) == 0:
+                continue
+
+            for idx, row in df.iterrows():
+                raw_id = safe_str(row.get("id"))
+                site_name = safe_str(row.get("site")) or site
+                url = safe_str(row.get("job_url"))
+                title = safe_str(row.get("title"))
+                company = safe_str(row.get("company"))
+                row_loc = safe_str(row.get("location"))
+                description = safe_str(row.get("description"))
+                date_posted = safe_str(row.get("date_posted"))
+
+                if not title and not url:
+                    continue
+
+                external_id = raw_id if raw_id else f"{site_name}-{idx}"
+                dedup_key = f"{site_name}:{url or external_id}"
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
+
+                records.append(
+                    {
+                        "external_id": external_id,
+                        "source": f"jobspy:{site_name}",
+                        "title": title or "Sem Título",
+                        "company": company or "Empresa Confidencial",
+                        "location": row_loc or loc,
+                        "url": url,
+                        "raw_description": description,
+                        "published_at": date_posted if date_posted else None,
+                    }
+                )
+                site_total += 1
+
+        sys.stderr.write(f"SITE_STATS:{site}={site_total}\n")
 
     print(json.dumps(records, ensure_ascii=False))
     return 0

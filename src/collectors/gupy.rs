@@ -4,6 +4,7 @@ use serde::Deserialize;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use crate::execution::ExecutionHandle;
 use crate::models::RawJobListing;
 
 #[derive(Debug, Default, Deserialize)]
@@ -289,23 +290,47 @@ pub async fn fetch_gupy_jobs(
     location_filter: Option<&str>,
     limit: usize,
     remote_only: bool,
+    exec_handle: Option<&ExecutionHandle>,
 ) -> Result<Vec<RawJobListing>> {
     let effective_limit = limit.clamp(1, 100);
     let target_cities = parse_target_cities(location_filter);
+
+    if let Some(h) = exec_handle {
+        h.emit_info(
+            "gupy_collector",
+            Some("gupy"),
+            &format!(
+                "Iniciando consulta ao portal Gupy para '{}' (cidades: {:?}, remoto: {})",
+                query, target_cities, remote_only
+            ),
+        )
+        .await;
+    }
 
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .context("Falha ao criar cliente HTTP para a Gupy")?;
 
-    let payload = request_gupy_portal(
+    let payload = match request_gupy_portal(
         &client,
         query,
         &target_cities,
         remote_only,
         effective_limit,
     )
-    .await?;
+    .await
+    {
+        Ok(p) => p,
+        Err(err) => {
+            let msg = format!("Falha ao consultar Gupy Portal: {}", err);
+            warn!("{}", msg);
+            if let Some(h) = exec_handle {
+                h.emit_error("gupy_collector", Some("gupy"), &msg, None).await;
+            }
+            return Err(err);
+        }
+    };
 
     let mut listings = Vec::new();
 
@@ -397,5 +422,18 @@ pub async fn fetch_gupy_jobs(
         target_cities,
         remote_only
     );
+
+    if let Some(h) = exec_handle {
+        h.emit_info(
+            "gupy_collector",
+            Some("gupy"),
+            &format!("Coletor Gupy finalizado: {} vagas obtidas", listings.len()),
+        )
+        .await;
+        h.record_metric("gupy_total_fetched", listings.len() as f64, "count")
+            .await
+            .ok();
+    }
+
     Ok(listings)
 }

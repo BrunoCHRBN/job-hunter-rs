@@ -99,6 +99,22 @@ pub struct JobRecord {
     pub created_at: Option<String>,
     pub dossier_json: Option<String>,
     pub fit_json: Option<String>,
+    #[sqlx(default)]
+    pub normalized_company: Option<String>,
+    #[sqlx(default)]
+    pub normalized_title: Option<String>,
+    #[sqlx(default)]
+    pub canonical_url: Option<String>,
+    #[sqlx(default)]
+    pub company_id: Option<i64>,
+    #[sqlx(default)]
+    pub screening_verdict: Option<String>,
+    #[sqlx(default)]
+    pub screening_score: Option<f64>,
+    #[sqlx(default)]
+    pub screening_json: Option<String>,
+    #[sqlx(default)]
+    pub source_status: Option<String>,
 }
 
 impl JobRecord {
@@ -185,6 +201,9 @@ pub struct JobFilter {
     pub seniority: Option<String>,
     pub shift: Option<String>,
     pub status: Option<String>,
+    pub source: Option<String>,
+    pub screening_verdict: Option<String>,
+    pub company_id: Option<i64>,
     pub only_enriched: bool,
 }
 
@@ -369,6 +388,10 @@ pub struct FitAxes {
     pub seniority: FitAxis,
     #[serde(default)]
     pub salary: FitAxis,
+    #[serde(default)]
+    pub experience: FitAxis,
+    #[serde(default)]
+    pub responsibilities: FitAxis,
 }
 
 /// Uma lacuna do currículo e o que fazer com ela.
@@ -427,6 +450,12 @@ impl JobRecord {
         self.fit_json
             .as_deref()
             .and_then(|s| serde_json::from_str::<MatchAnalysisResult>(s).ok())
+    }
+
+    pub fn screening(&self) -> Option<crate::screening::ScreeningResult> {
+        self.screening_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<crate::screening::ScreeningResult>(s).ok())
     }
 }
 
@@ -534,5 +563,110 @@ pub struct SavedSearch {
     pub interval_minutes: i64,
     pub last_run_at: Option<String>,
     pub last_found_count: i64,
+}
+
+// ======================================================================
+// Sprints 09 a 13: Coletores, Origens Múltiplas, Empresas e Telemetria IA
+// ======================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CollectorConfig {
+    pub source_id: String,
+    pub display_name: String,
+    pub group_name: String,
+    pub enabled: i64,
+    pub timeout_secs: i64,
+    pub default_limit: i64,
+    pub strategy_notes: String,
+    pub last_status: Option<String>,
+    pub last_run_at: Option<String>,
+    pub last_count: i64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct JobSourceRecord {
+    pub id: i64,
+    pub job_id: i64,
+    pub source: String,
+    pub external_id: String,
+    pub original_url: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    pub source_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CompanyRecord {
+    pub id: i64,
+    pub official_name: String,
+    pub normalized_name: String,
+    pub website: String,
+    pub segment: String,
+    pub location: String,
+    pub description: String,
+    pub is_monitored: i64,
+    pub is_preferred: i64,
+    pub is_excluded: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    #[sqlx(default)]
+    pub active_jobs_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CompanyAliasRecord {
+    pub id: i64,
+    pub company_id: i64,
+    pub alias_name: String,
+    pub normalized_alias: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CompanySourceRecord {
+    pub id: i64,
+    pub company_id: i64,
+    pub source_type: String,
+    pub career_url: String,
+    pub ats_provider: String,
+    pub portal_id: String,
+    pub integration_status: String,
+    pub last_checked_at: Option<String>,
+    pub next_check_at: Option<String>,
+    pub last_found_count: i64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AiOperationRecord {
+    pub id: i64,
+    pub execution_id: Option<String>,
+    pub operation_type: String,
+    pub model_used: String,
+    pub fallback_used: i64,
+    pub attempts: i64,
+    pub status: String,
+    pub records_count: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub duration_ms: i64,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiTelemetrySummary {
+    pub total_operations: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
+    pub cache_entries: i64,
+    pub total_cache_hits: i64,
+    pub fallback_count: i64,
+    pub error_count: i64,
+    pub avg_duration_ms: f64,
+    pub recent_operations: Vec<AiOperationRecord>,
 }
 
