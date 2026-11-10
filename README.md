@@ -178,6 +178,14 @@ Toda comunicação com o Google AI Studio é feita via chamadas HTTP diretas (`r
 - Chave de API do **Google AI Studio** (`GEMINI_API_KEY`)
 - *(Opcional)* `python3` com `python-jobspy` caso deseje ativar a bridge complementar para LinkedIn/Indeed/Glassdoor além do coletor nativo da Gupy.
 
+### Instalação no Windows
+
+Para um desktop Windows sem Rust, Python, Git ou compilador C++ instalado, siga o guia completo:
+
+**[Instalação no Windows do zero →](docs/INSTALACAO_WINDOWS.md)**
+
+Ele cobre instalação nativa com MSVC, alternativa WSL2, configuração da chave Gemini, JobSpy opcional, atualização, backup, segurança e solução de problemas.
+
 ### Configuração
 
 ```bash
